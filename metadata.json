@@ -1,0 +1,7 @@
+{
+  "name": "Crystal Chat",
+  "description": "Minimalist, end-to-end encrypted messaging with pure crystal clarity, zero tracking, group chats, push notifications, and offline-first security.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Crystal Base Chat Bubble Shadow / Subtle Glow -->
+    <path
+        android:pathData="M34,36 L74,36 C79.5,36 84,40.5 84,46 L84,66 C84,71.5 79.5,76 74,76 L56,76 L44,85 L44,76 L34,76 C28.5,76 24,71.5 24,46 C24,40.5 28.5,36 34,36 Z"
+        android:fillColor="#16202E" />
+
+    <!-- Crystal Chat Bubble Body -->
+    <path
+        android:pathData="M35,38 L73,38 C77.4,38 81,41.6 81,46 L81,65 C81,69.4 77.4,73 73,73 L55,73 L45,81 L45,73 L35,73 C30.6,73 27,69.4 27,65 L27,46 C27,41.6 30.6,38 35,38 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="27"
+                android:startY="38"
+                android:endX="81"
+                android:endY="81"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#1E293B" />
+                <item android:offset="1.0" android:color="#0F172A" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Crystal Prism Top Facet -->
+    <path
+        android:pathData="M54,42 L67,52 L54,55 L41,52 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="41"
+                android:startY="42"
+                android:endX="67"
+                android:endY="55"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#7DD3FC" />
+                <item android:offset="1.0" android:color="#38BDF8" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Crystal Left Facet -->
+    <path
+        android:pathData="M41,52 L54,55 L54,69 Z"
+        android:fillColor="#0284C7" />
+
+    <!-- Crystal Right Facet -->
+    <path
+        android:pathData="M67,52 L54,55 L54,69 Z"
+        android:fillColor="#0369A1" />
+
+    <!-- Crystal Center Highlight Sparkle -->
+    <path
+        android:pathData="M54,46 L55.5,50 L59,51 L55.5,52 L54,56 L52.5,52 L49,51 L52.5,50 Z"
+        android:fillColor="#FFFFFF" />
+
+</vector>
