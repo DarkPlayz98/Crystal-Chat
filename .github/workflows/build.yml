@@ -73,37 +73,7 @@ jobs:
           mkdir -p app
           if [ ! -f "app/google-services.json" ]; then
             echo "Creating fallback app/google-services.json..."
-            cat << 'EOF' > app/google-services.json
-{
-  "project_info": {
-    "project_number": "964408789892",
-    "project_id": "gen-lang-client-0681324575",
-    "storage_bucket": "gen-lang-client-0681324575.firebasestorage.app"
-  },
-  "client": [
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:964408789892:android:4f211d31a1d8cad0e86bd1",
-        "android_client_info": {
-          "package_name": "com.aistudio.cipherchat.pvqztk"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [
-        {
-          "current_key": "dummy_build_key"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": []
-        }
-      }
-    }
-  ],
-  "configuration_version": "1"
-}
-EOF
+            echo "ewogICJwcm9qZWN0X2luZm8iOiB7CiAgICAicHJvamVjdF9udW1iZXIiOiAiOTY0NDA4Nzg5ODkyIiwKICAgICJwcm9qZWN0X2lkIjogImdlbi1sYW5nLWNsaWVudC0wNjgxMzI0NTc1IiwKICAgICJzdG9yYWdlX2J1Y2tldCI6ICJnZW4tbGFuZy1jbGllbnQtMDY4MTMyNDU3NS5maXJlYmFzZXN0b3JhZ2UuYXBwIgogIH0sCiAgImNsaWVudCI6IFsKICAgIHsKICAgICAgImNsaWVudF9pbmZvIjogewogICAgICAgICJtb2JpbGVzZGtfYXBwX2lkIjogIjE6OTY0NDA4Nzg5ODkyOmFuZHJvaWQ6NGYyMTFkMzFhMWQ4Y2FkMGU4NmJkMSIsCiAgICAgICAgImFuZHJvaWRfY2xpZW50X2luZm8iOiB7CiAgICAgICAgICAicGFja2FnZV9uYW1lIjogImNvbS5haXN0dWRpby5jaXBoZXJjaGF0LnB2cXp0ayIKICAgICAgICB9CiAgICAgIH0sCiAgICAgICJvYXV0aF9jbGllbnQiOiBbXSwKICAgICAgImFwaV9rZXkiOiBbCiAgICAgICAgewogICAgICAgICAgImN1cnJlbnRfa2V5IjogImR1bW15X2J1aWxkX2tleSIKICAgICAgICB9CiAgICAgIF0sCiAgICAgICJzZXJ2aWNlcyI6IHsKICAgICAgICAiYXBwaW52aXRlX3NlcnZpY2UiOiB7CiAgICAgICAgICAib3RoZXJfcGxhdGZvcm1fb2F1dGhfY2xpZW50IjogW10KICAgICAgICB9CiAgICAgIH0KICAgIH0KICBdLAogICJjb25maWd1cmF0aW9uX3ZlcnNpb24iOiAiMSIKfQo=" | base64 -d > app/google-services.json
             echo "Fallback app/google-services.json established."
           else
             echo "app/google-services.json is present."
