@@ -40,7 +40,7 @@ abstract class CipherDatabase : RoomDatabase() {
           CipherDatabase::class.java,
           "crystal_chat_database"
         )
-          .fallbackToDestructiveMigration()
+          .fallbackToDestructiveMigration(dropAllTables = true)
           .addCallback(CipherDatabaseCallback(scope))
           .build()
         INSTANCE = instance

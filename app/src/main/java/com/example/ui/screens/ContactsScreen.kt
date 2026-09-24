@@ -25,8 +25,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.ContactPhone
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.ImportContacts
@@ -451,7 +451,7 @@ fun ContactRowItem(
             verticalAlignment = Alignment.CenterVertically
           ) {
             Icon(
-              imageVector = if (contact.hasApp) Icons.Default.Chat else Icons.Default.Sms,
+              imageVector = if (contact.hasApp) Icons.AutoMirrored.Filled.Chat else Icons.Default.Sms,
               contentDescription = null,
               tint = if (contact.hasApp) Color(0xFF10B981) else MaterialTheme.colorScheme.primary,
               modifier = Modifier.size(11.dp)
@@ -473,7 +473,7 @@ fun ContactRowItem(
         modifier = Modifier.testTag("contact_message_button")
       ) {
         Icon(
-          imageVector = Icons.Default.Chat,
+          imageVector = Icons.AutoMirrored.Filled.Chat,
           contentDescription = "Chat",
           tint = MaterialTheme.colorScheme.primary
         )

@@ -72,6 +72,7 @@ fun MyApplicationTheme(
     SideEffect {
       val window = (view.context as? Activity)?.window
       if (window != null) {
+        @Suppress("DEPRECATION")
         window.statusBarColor = colorScheme.surface.toArgb()
         WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
       }

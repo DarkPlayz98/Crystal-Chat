@@ -24,6 +24,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    env:
+      JAVA_OPTS: "-Djava.awt.headless=true"
+      GRADLE_OPTS: "-Dorg.gradle.jvmargs=\"-Xmx4g -Dfile.encoding=UTF-8 -Djava.awt.headless=true\" -Djava.awt.headless=true"
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -38,25 +42,87 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Prepare Secrets and Debug Keystore
+      - name: Prepare Signing Keystore and Google Services
         run: |
-          echo "Setting up environment files and keystore..."
-          if [ -f "debug.keystore.base64" ] && [ ! -f "debug.keystore" ]; then
+          echo "=== Step 1: Ensure debug.keystore exists ==="
+          if [ -f "debug.keystore" ]; then
+            echo "Existing debug.keystore found."
+          elif [ -f "debug.keystore.base64" ]; then
+            echo "Decoding debug.keystore from base64..."
             base64 -d debug.keystore.base64 > debug.keystore
-            echo "Decoded debug.keystore from base64."
+          else
+            echo "Generating fresh Android debug keystore with keytool..."
+            keytool -genkeypair -v \
+              -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
           fi
+
+          if [ ! -f "debug.keystore" ]; then
+            echo "FATAL: debug.keystore could not be established!"
+            exit 1
+          fi
+          echo "debug.keystore is verified ($(wc -c < debug.keystore) bytes)."
+
+          echo "=== Step 2: Ensure app/google-services.json exists ==="
+          mkdir -p app
+          if [ ! -f "app/google-services.json" ]; then
+            echo "Creating fallback app/google-services.json..."
+            cat << 'EOF' > app/google-services.json
+{
+  "project_info": {
+    "project_number": "964408789892",
+    "project_id": "gen-lang-client-0681324575",
+    "storage_bucket": "gen-lang-client-0681324575.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:964408789892:android:4f211d31a1d8cad0e86bd1",
+        "android_client_info": {
+          "package_name": "com.aistudio.cipherchat.pvqztk"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "dummy_build_key"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
+EOF
+            echo "Fallback app/google-services.json established."
+          else
+            echo "app/google-services.json is present."
+          fi
+
+          echo "=== Step 3: Ensure .env exists ==="
           if [ ! -f ".env" ]; then
             if [ -f ".env.example" ]; then
               cp .env.example .env
             else
               touch .env
             fi
-            echo "Prepared .env file."
+            echo ".env established."
           fi
 
       - name: Ensure Gradle Wrapper Executable
         run: |
           if [ ! -f "./gradlew" ]; then
+            echo "Generating Gradle wrapper..."
             gradle wrapper --gradle-version 9.3.1
           fi
           chmod +x gradlew
