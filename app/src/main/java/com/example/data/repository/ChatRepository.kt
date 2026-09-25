@@ -114,7 +114,14 @@ class ChatRepository(
               val recipientHandle = (data["recipientHandle"] as? String ?: "").lowercase().removePrefix("@")
               val convId = data["conversationId"] as? String ?: ""
 
-              val isDirectRecipient = (myPhone.isNotBlank() && recipientPhone.isNotBlank() && recipientPhone == myPhone) ||
+              val isPhoneMatch = run {
+                val myDigits = myPhone.filter { it.isDigit() }
+                val recDigits = recipientPhone.filter { it.isDigit() }
+                if (myDigits.isBlank() || recDigits.isBlank()) false
+                else myDigits == recDigits ||
+                  (myDigits.length >= 7 && recDigits.length >= 7 && (myDigits.endsWith(recDigits.takeLast(7)) || recDigits.endsWith(myDigits.takeLast(7))))
+              }
+              val isDirectRecipient = isPhoneMatch ||
                 (myHandle.isNotBlank() && recipientHandle.isNotBlank() && recipientHandle == myHandle)
               val isConversationMatch = activeChatId.value != null && activeChatId.value == convId
 
@@ -274,53 +281,43 @@ class ChatRepository(
         mediaUri = mediaUri,
         mediaMeta = mediaMeta,
         timestamp = now,
-        status = initialStatus,
+        status = "DELIVERED",
         isOutgoing = true,
         expiresAt = expiresAt,
         authTagHex = payload.authTagHex,
-        isSms = isSmsDelivery
+        isSms = false
       )
 
       messageDao.insert(message)
-      val prefix = if (isSmsDelivery) "[SMS] " else ""
       val summary = if (mediaType != "TEXT") "[$mediaType] $text" else text
-      conversationDao.updateLastMessage(conversationId, "${prefix}You: $summary", now)
+      conversationDao.updateLastMessage(conversationId, "You: $summary", now)
 
-      if (isSmsDelivery) {
-        val phone = conv.phoneNumber ?: ""
-        // Send directly in background via Android's SmsManager
-        SmsHelper.sendDirectSmsInBackground(
-          context = context,
-          phoneNumber = phone,
-          messageText = text
+      // Publish to Firestore for peer delivery across devices
+      try {
+        val cleanRecipientPhone = (conv?.phoneNumber ?: "").filter { it.isDigit() || it == '+' }
+        val cleanMyPhone = myPhone.filter { it.isDigit() || it == '+' }
+        val firestoreMsg = hashMapOf(
+          "id" to msgId,
+          "conversationId" to conversationId,
+          "senderId" to myUid,
+          "senderName" to myName,
+          "senderPhone" to cleanMyPhone,
+          "senderHandle" to myHandle,
+          "recipientPhone" to cleanRecipientPhone,
+          "recipientHandle" to (conv?.participantHandles ?: ""),
+          "cipherTextBase64" to payload.cipherTextBase64,
+          "nonceBase64" to payload.nonceBase64,
+          "plainText" to text,
+          "mediaType" to mediaType,
+          "mediaUri" to (mediaUri ?: ""),
+          "mediaMeta" to (mediaMeta ?: ""),
+          "timestamp" to now,
+          "status" to "DELIVERED",
+          "authTagHex" to payload.authTagHex
         )
-      } else {
-        // Publish to Firestore for peer / guest delivery across devices
-        try {
-          val firestoreMsg = hashMapOf(
-            "id" to msgId,
-            "conversationId" to conversationId,
-            "senderId" to myUid,
-            "senderName" to myName,
-            "senderPhone" to myPhone,
-            "senderHandle" to myHandle,
-            "recipientPhone" to (conv?.phoneNumber ?: ""),
-            "recipientHandle" to (conv?.participantHandles ?: ""),
-            "cipherTextBase64" to payload.cipherTextBase64,
-            "nonceBase64" to payload.nonceBase64,
-            "plainText" to text,
-            "mediaType" to mediaType,
-            "mediaUri" to (mediaUri ?: ""),
-            "mediaMeta" to (mediaMeta ?: ""),
-            "timestamp" to now,
-            "status" to "SENT",
-            "authTagHex" to payload.authTagHex
-          )
-          authRepository.firestore.collection("messages").document(msgId).set(firestoreMsg)
-          messageDao.updateStatus(msgId, "DELIVERED")
-        } catch (e: Exception) {
-          Log.w(TAG, "Firestore publish failed: ${e.message}")
-        }
+        authRepository.firestore.collection("messages").document(msgId).set(firestoreMsg)
+      } catch (e: Exception) {
+        Log.w(TAG, "Firestore publish failed: ${e.message}")
       }
     }
   }
@@ -428,20 +425,13 @@ class ChatRepository(
       ?: conversationDao.getConversationByPhone(cleanPhone)
 
     if (existing != null) {
-      if (existing.isExternalSms != !contact.hasApp) {
-        conversationDao.update(existing.copy(isExternalSms = !contact.hasApp))
-      }
       return@withContext existing.id
     }
 
     val chatId = "chat_contact_${UUID.randomUUID().toString().take(8)}"
     val displayHandle = contact.handle ?: contact.phoneNumber
     val safetyNum = CryptoEngine.generateSafetyNumber("my_pubkey", contact.phoneNumber)
-    val initialNotice = if (contact.hasApp) {
-      "Encrypted Crystal chat started with ${contact.name}"
-    } else {
-      "SMS Contact • Messages deliver via SMS (${contact.phoneNumber})"
-    }
+    val initialNotice = "Encrypted Crystal chat started with ${contact.name}"
 
     val newConv = ConversationEntity(
       id = chatId,
@@ -450,12 +440,12 @@ class ChatRepository(
       participantNames = contact.name,
       participantHandles = displayHandle,
       phoneNumber = contact.phoneNumber,
-      isExternalSms = !contact.hasApp,
+      isExternalSms = false,
       lastMessageText = initialNotice,
       lastMessageTime = System.currentTimeMillis(),
       unreadCount = 0,
       isPinned = false,
-      isVerified = contact.hasApp,
+      isVerified = true,
       safetyNumber = safetyNum,
       avatarColorHex = contact.avatarColorHex
     )
@@ -518,6 +508,27 @@ class ChatRepository(
   fun clearUnread(conversationId: String) {
     scope.launch(Dispatchers.IO) {
       conversationDao.clearUnread(conversationId)
+    }
+  }
+
+  fun markAsRead(conversationId: String) {
+    clearUnread(conversationId)
+  }
+
+  fun setActiveChat(id: String?) {
+    activeChatId.value = id
+  }
+
+  fun togglePin(id: String, isPinned: Boolean) {
+    scope.launch(Dispatchers.IO) {
+      conversationDao.updatePinned(id, !isPinned)
+    }
+  }
+
+  fun deleteConversation(id: String) {
+    scope.launch(Dispatchers.IO) {
+      conversationDao.deleteById(id)
+      messageDao.clearMessagesForConversation(id)
     }
   }
 

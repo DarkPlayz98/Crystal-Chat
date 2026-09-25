@@ -153,7 +153,7 @@ fun ProfileAuthScreen(
     }
   }
 
-  val isUserSignedIn = userProfile?.isGuest == false
+  val isUserSignedIn = userProfile != null
 
   Scaffold(
     topBar = {
@@ -207,16 +207,16 @@ fun ProfileAuthScreen(
                 .clip(CircleShape)
                 .background(
                   if (isUserSignedIn) MaterialTheme.colorScheme.primaryContainer
-                  else MaterialTheme.colorScheme.secondaryContainer
+                  else MaterialTheme.colorScheme.surfaceVariant
                 ),
               contentAlignment = Alignment.Center
             ) {
-              val initial = (userProfile?.displayName ?: "G").take(1).uppercase()
+              val initial = (userProfile?.displayName ?: "C").take(1).uppercase()
               Text(
                 text = initial,
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
-                color = if (isUserSignedIn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+                color = if (isUserSignedIn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
               )
             }
           }
@@ -224,7 +224,7 @@ fun ProfileAuthScreen(
           Spacer(modifier = Modifier.height(12.dp))
 
           val displayName = userProfile?.displayName?.ifBlank { null }
-            ?: (if (isUserSignedIn) "Crystal User" else "Guest User")
+            ?: (if (isUserSignedIn) "Crystal User" else "Sign In Required")
           Text(
             text = displayName,
             style = MaterialTheme.typography.titleLarge,
@@ -251,8 +251,9 @@ fun ProfileAuthScreen(
               Text(
                 text = when {
                   userProfile?.isGoogleAuth == true -> "Verified with Google"
-                  userProfile?.isPhoneAuth == true -> "Verified via Phone OTP"
-                  else -> "Guest Account (Unique Number)"
+                  userProfile?.isPhoneAuth == true -> "Verified Phone Account"
+                  isUserSignedIn -> "Active Profile"
+                  else -> "Not Signed In"
                 },
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.SemiBold,
@@ -262,14 +263,14 @@ fun ProfileAuthScreen(
           }
 
           // Handle badge
-          val handle = userProfile?.handle?.takeIf { it.isNotBlank() } ?: "anonymous"
+          val handle = userProfile?.handle?.takeIf { it.isNotBlank() } ?: "not_set"
           Surface(
             shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier
               .padding(top = 8.dp)
               .clip(RoundedCornerShape(12.dp))
-              .clickable { showEditHandleDialog = true }
+              .clickable(enabled = isUserSignedIn) { showEditHandleDialog = true }
           ) {
             Row(
               modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
@@ -287,13 +288,15 @@ fun ProfileAuthScreen(
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
               )
-              Spacer(modifier = Modifier.width(6.dp))
-              Icon(
-                imageVector = Icons.Default.Edit,
-                contentDescription = "Edit handle",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(13.dp)
-              )
+              if (isUserSignedIn) {
+                Spacer(modifier = Modifier.width(6.dp))
+                Icon(
+                  imageVector = Icons.Default.Edit,
+                  contentDescription = "Edit handle",
+                  tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                  modifier = Modifier.size(13.dp)
+                )
+              }
             }
           }
 
@@ -353,8 +356,6 @@ fun ProfileAuthScreen(
           Spacer(modifier = Modifier.height(10.dp))
 
           if (!isUserSignedIn) {
-            // Guest mode: Give option to sign in with Google or Phone OTP
-            // (NOTE: Once logged in with Google or Phone, the guest option is REMOVED!)
             TabRow(
               selectedTabIndex = authTab,
               containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -364,12 +365,12 @@ fun ProfileAuthScreen(
               Tab(
                 selected = authTab == 0,
                 onClick = { authTab = 0 },
-                text = { Text("Google Sign-In", fontWeight = FontWeight.SemiBold) }
+                text = { Text("Phone OTP", fontWeight = FontWeight.SemiBold) }
               )
               Tab(
                 selected = authTab == 1,
                 onClick = { authTab = 1 },
-                text = { Text("Phone OTP", fontWeight = FontWeight.SemiBold) }
+                text = { Text("Google Sign-In", fontWeight = FontWeight.SemiBold) }
               )
             }
 
@@ -385,9 +386,159 @@ fun ProfileAuthScreen(
             }
 
             if (authTab == 0) {
+              // Phone OTP Tab
+              Text(
+                text = "Enter your mobile number with country code to receive an official SMS verification code.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 20.sp
+              )
+
+              Spacer(modifier = Modifier.height(12.dp))
+
+              if (currentVerificationId == null) {
+                PhoneInputField(
+                  nationalNumber = otpNationalNumber,
+                  onNationalNumberChange = { otpNationalNumber = it },
+                  selectedCountry = otpCountry,
+                  onCountrySelected = { otpCountry = it },
+                  label = "Mobile Number",
+                  modifier = Modifier.fillMaxWidth().testTag("otp_phone_input")
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                val fullPhoneToVerify = "${otpCountry.dialCode}${otpNationalNumber.filter { it.isDigit() }.trimStart('0')}"
+
+                Button(
+                  onClick = {
+                    if (activity != null && otpNationalNumber.isNotBlank()) {
+                      isSendingOtp = true
+                      otpStatusMessage = null
+                      viewModel.sendPhoneOtp(
+                        activity = activity,
+                        phoneNumber = fullPhoneToVerify,
+                        onCodeSent = { vid ->
+                          isSendingOtp = false
+                          currentVerificationId = vid
+                          otpStatusMessage = "SMS verification code sent to $fullPhoneToVerify"
+                          Toast.makeText(context, "Verification code sent!", Toast.LENGTH_SHORT).show()
+                        },
+                        onAutoVerified = {
+                          isSendingOtp = false
+                          Toast.makeText(context, "Instant phone verification successful!", Toast.LENGTH_SHORT).show()
+                        },
+                        onError = { err ->
+                          isSendingOtp = false
+                          Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                        }
+                      )
+                    }
+                  },
+                  enabled = !isSendingOtp && otpNationalNumber.length >= 6,
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("send_otp_button"),
+                  shape = RoundedCornerShape(12.dp)
+                ) {
+                  if (isSendingOtp) {
+                    CircularProgressIndicator(
+                      modifier = Modifier.size(18.dp),
+                      color = MaterialTheme.colorScheme.onPrimary,
+                      strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Sending SMS Code...")
+                  } else {
+                    Icon(Icons.Default.Phone, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Send SMS Verification Code", fontWeight = FontWeight.SemiBold)
+                  }
+                }
+              } else {
+                // OTP Code Entry
+                otpStatusMessage?.let { msg ->
+                  Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier.fillMaxWidth()
+                  ) {
+                    Text(
+                      text = msg,
+                      style = MaterialTheme.typography.bodySmall,
+                      color = MaterialTheme.colorScheme.onPrimaryContainer,
+                      fontWeight = FontWeight.Bold,
+                      modifier = Modifier.padding(8.dp)
+                    )
+                  }
+                  Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                OutlinedTextField(
+                  value = otpCodeInput,
+                  onValueChange = { if (it.length <= 6) otpCodeInput = it },
+                  label = { Text("6-Digit SMS Verification Code") },
+                  placeholder = { Text("Enter SMS code") },
+                  singleLine = true,
+                  modifier = Modifier.fillMaxWidth().testTag("otp_code_input")
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                val fullPhoneToVerify = "${otpCountry.dialCode}${otpNationalNumber.filter { it.isDigit() }.trimStart('0')}"
+
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                  OutlinedButton(
+                    onClick = {
+                      currentVerificationId = null
+                      otpCodeInput = ""
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(10.dp)
+                  ) {
+                    Text("Change Number")
+                  }
+
+                  Button(
+                    onClick = {
+                      val vid = currentVerificationId ?: return@Button
+                      isVerifyingOtp = true
+                      viewModel.verifyPhoneOtp(
+                        verificationId = vid,
+                        otpCode = otpCodeInput,
+                        phoneNumber = fullPhoneToVerify
+                      ) { success, err ->
+                        isVerifyingOtp = false
+                        if (success) {
+                          currentVerificationId = null
+                          otpCodeInput = ""
+                          Toast.makeText(context, "Phone verified successfully!", Toast.LENGTH_SHORT).show()
+                        } else {
+                          Toast.makeText(context, err ?: "Verification failed", Toast.LENGTH_SHORT).show()
+                        }
+                      }
+                    },
+                    enabled = !isVerifyingOtp && otpCodeInput.length >= 6,
+                    modifier = Modifier.weight(1.3f).testTag("verify_otp_button"),
+                    shape = RoundedCornerShape(10.dp)
+                  ) {
+                    if (isVerifyingOtp) {
+                      CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+                      Spacer(modifier = Modifier.width(6.dp))
+                      Text("Verifying...")
+                    } else {
+                      Text("Verify & Sign In")
+                    }
+                  }
+                }
+              }
+            } else {
               // Google Sign-In Tab
               Text(
-                text = "Sign in with your Google account to secure your cryptographic identity, remove guest limitations, and automatically sync your phone contacts.",
+                text = "Sign in with your Google account to secure your cryptographic identity, sync contacts, and enable cross-device messaging.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 lineHeight = 20.sp
@@ -432,152 +583,9 @@ fun ProfileAuthScreen(
                   Text("Sign in with Google", fontWeight = FontWeight.SemiBold)
                 }
               }
-            } else {
-              // Phone OTP Tab
-              Text(
-                text = "Enter your phone number to receive a 6-digit OTP code and authenticate securely without a password.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                lineHeight = 20.sp
-              )
-
-              Spacer(modifier = Modifier.height(12.dp))
-
-              if (currentVerificationId == null) {
-                PhoneInputField(
-                  nationalNumber = otpNationalNumber,
-                  onNationalNumberChange = { otpNationalNumber = it },
-                  selectedCountry = otpCountry,
-                  onCountrySelected = { otpCountry = it },
-                  label = "Mobile Number",
-                  modifier = Modifier.fillMaxWidth().testTag("otp_phone_input")
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                val fullPhoneToVerify = "${otpCountry.dialCode} ${otpNationalNumber.trim()}"
-
-                Button(
-                  onClick = {
-                    if (activity != null && otpNationalNumber.isNotBlank()) {
-                      isSendingOtp = true
-                      viewModel.sendPhoneOtp(
-                        activity = activity,
-                        phoneNumber = fullPhoneToVerify,
-                        onCodeSent = { vid, testCode ->
-                          isSendingOtp = false
-                          currentVerificationId = vid
-                          otpStatusMessage = if (testCode != null) "Test OTP Code: $testCode" else "Code sent via SMS"
-                          Toast.makeText(context, "Verification code sent!", Toast.LENGTH_SHORT).show()
-                        },
-                        onError = { err ->
-                          isSendingOtp = false
-                          Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
-                        }
-                      )
-                    }
-                  },
-                  enabled = !isSendingOtp && otpNationalNumber.length >= 6,
-                  modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("send_otp_button"),
-                  shape = RoundedCornerShape(12.dp)
-                ) {
-                  if (isSendingOtp) {
-                    CircularProgressIndicator(
-                      modifier = Modifier.size(18.dp),
-                      color = MaterialTheme.colorScheme.onPrimary,
-                      strokeWidth = 2.dp
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Sending Code...")
-                  } else {
-                    Icon(Icons.Default.Phone, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Send Verification Code", fontWeight = FontWeight.SemiBold)
-                  }
-                }
-              } else {
-                // OTP Code Entry
-                otpStatusMessage?.let { msg ->
-                  Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.fillMaxWidth()
-                  ) {
-                    Text(
-                      text = msg,
-                      style = MaterialTheme.typography.bodySmall,
-                      color = MaterialTheme.colorScheme.onPrimaryContainer,
-                      fontWeight = FontWeight.Bold,
-                      modifier = Modifier.padding(8.dp)
-                    )
-                  }
-                  Spacer(modifier = Modifier.height(8.dp))
-                }
-
-                OutlinedTextField(
-                  value = otpCodeInput,
-                  onValueChange = { if (it.length <= 6) otpCodeInput = it },
-                  label = { Text("6-Digit Verification Code") },
-                  placeholder = { Text("e.g. 123456") },
-                  singleLine = true,
-                  modifier = Modifier.fillMaxWidth().testTag("otp_code_input")
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                val fullPhoneToVerify = "${otpCountry.dialCode} ${otpNationalNumber.trim()}"
-
-                Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                  OutlinedButton(
-                    onClick = {
-                      currentVerificationId = null
-                      otpCodeInput = ""
-                    },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(10.dp)
-                  ) {
-                    Text("Change Number")
-                  }
-
-                  Button(
-                    onClick = {
-                      val vid = currentVerificationId ?: return@Button
-                      isVerifyingOtp = true
-                      viewModel.verifyPhoneOtp(
-                        verificationId = vid,
-                        otpCode = otpCodeInput,
-                        phoneNumber = fullPhoneToVerify
-                      ) { success, err ->
-                        isVerifyingOtp = false
-                        if (success) {
-                          Toast.makeText(context, "Phone verified successfully!", Toast.LENGTH_SHORT).show()
-                        } else {
-                          Toast.makeText(context, err ?: "Verification failed", Toast.LENGTH_SHORT).show()
-                        }
-                      }
-                    },
-                    enabled = !isVerifyingOtp && otpCodeInput.length >= 6,
-                    modifier = Modifier.weight(1.3f).testTag("verify_otp_button"),
-                    shape = RoundedCornerShape(10.dp)
-                  ) {
-                    if (isVerifyingOtp) {
-                      CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
-                      Spacer(modifier = Modifier.width(6.dp))
-                      Text("Verifying...")
-                    } else {
-                      Text("Verify & Sign In")
-                    }
-                  }
-                }
-              }
             }
           } else {
-            // Signed In View: THE GUEST OPTION IS COMPLETELY REMOVED!
+            // Signed In View
             Row(
               verticalAlignment = Alignment.CenterVertically,
               modifier = Modifier.padding(vertical = 4.dp)

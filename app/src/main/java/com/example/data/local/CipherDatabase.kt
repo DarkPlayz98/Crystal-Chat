@@ -6,10 +6,12 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.data.crypto.CryptoEngine
+import com.example.data.local.dao.CallDao
 import com.example.data.local.dao.ContactDao
 import com.example.data.local.dao.ConversationDao
 import com.example.data.local.dao.DeviceSessionDao
 import com.example.data.local.dao.MessageDao
+import com.example.data.local.model.CallEntity
 import com.example.data.local.model.ContactEntity
 import com.example.data.local.model.ConversationEntity
 import com.example.data.local.model.DeviceSessionEntity
@@ -19,8 +21,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 @Database(
-  entities = [ConversationEntity::class, MessageEntity::class, DeviceSessionEntity::class, ContactEntity::class],
-  version = 2,
+  entities = [ConversationEntity::class, MessageEntity::class, DeviceSessionEntity::class, ContactEntity::class, CallEntity::class],
+  version = 3,
   exportSchema = false
 )
 abstract class CipherDatabase : RoomDatabase() {
@@ -28,6 +30,7 @@ abstract class CipherDatabase : RoomDatabase() {
   abstract fun messageDao(): MessageDao
   abstract fun deviceSessionDao(): DeviceSessionDao
   abstract fun contactDao(): ContactDao
+  abstract fun callDao(): CallDao
 
   companion object {
     @Volatile

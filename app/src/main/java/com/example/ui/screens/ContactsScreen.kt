@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.ContactPhone
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.ImportContacts
@@ -384,6 +385,14 @@ fun ContactsScreen(
               onMessageClick = {
                 viewModel.startChatWithContact(contact)
               },
+              onCallClick = {
+                viewModel.startVoiceCall(
+                  contactName = contact.name,
+                  phoneNumber = contact.phoneNumber,
+                  handle = contact.handle,
+                  avatarColorHex = contact.avatarColorHex
+                )
+              },
               onDirectSmsClick = {
                 SmsHelper.openDefaultMessagingApp(context, contact.phoneNumber, "")
               },
@@ -422,6 +431,7 @@ fun ContactsScreen(
 fun ContactRowItem(
   contact: ContactEntity,
   onMessageClick: () -> Unit,
+  onCallClick: () -> Unit,
   onDirectSmsClick: () -> Unit,
   onDelete: () -> Unit
 ) {
@@ -494,27 +504,39 @@ fun ContactRowItem(
         // Badge indicator
         Surface(
           shape = RoundedCornerShape(6.dp),
-          color = if (contact.hasApp) Color(0xFF10B981).copy(alpha = 0.12f) else MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
+          color = if (contact.hasApp) Color(0xFF10B981).copy(alpha = 0.12f) else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
         ) {
           Row(
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically
           ) {
             Icon(
-              imageVector = if (contact.hasApp) Icons.AutoMirrored.Filled.Chat else Icons.Default.Sms,
+              imageVector = Icons.AutoMirrored.Filled.Chat,
               contentDescription = null,
               tint = if (contact.hasApp) Color(0xFF10B981) else MaterialTheme.colorScheme.primary,
               modifier = Modifier.size(11.dp)
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(
-              text = if (contact.hasApp) "Crystal Chat User" else "Direct SMS",
+              text = if (contact.hasApp) "Crystal Chat User" else "End-to-End Encrypted",
               fontSize = 11.sp,
               fontWeight = FontWeight.Medium,
               color = if (contact.hasApp) Color(0xFF10B981) else MaterialTheme.colorScheme.primary
             )
           }
         }
+      }
+
+      // Quick Voice Call Button
+      IconButton(
+        onClick = onCallClick,
+        modifier = Modifier.testTag("contact_call_button_${contact.id}")
+      ) {
+        Icon(
+          imageVector = Icons.Default.Call,
+          contentDescription = "HD+ Voice Call",
+          tint = MaterialTheme.colorScheme.primary
+        )
       }
 
       // Quick Chat Button

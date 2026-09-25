@@ -35,6 +35,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.AvTimer
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Image
@@ -256,6 +257,24 @@ fun ChatDetailScreen(
                 )
               }
             }
+          }
+
+          IconButton(
+            onClick = {
+              viewModel.startVoiceCall(
+                contactName = activeConv.title,
+                phoneNumber = activeConv.phoneNumber ?: activeConv.title,
+                handle = activeConv.participantHandles,
+                avatarColorHex = activeConv.avatarColorHex
+              )
+            },
+            modifier = Modifier.testTag("chat_voice_call_button")
+          ) {
+            Icon(
+              imageVector = Icons.Default.Call,
+              contentDescription = "HD+ Voice Call",
+              tint = MaterialTheme.colorScheme.primary
+            )
           }
 
           IconButton(onClick = { showMenu = true }) {
@@ -487,7 +506,7 @@ fun ChatDetailScreen(
               .testTag("send_button")
           ) {
             Icon(
-              imageVector = if (activeConv.isExternalSms) Icons.Default.Sms else Icons.AutoMirrored.Filled.Send,
+              imageVector = Icons.AutoMirrored.Filled.Send,
               contentDescription = "Send message",
               tint = if (inputText.isNotBlank()) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
               modifier = Modifier.size(20.dp)

@@ -5,6 +5,8 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.local.CipherDatabase
+import com.example.data.local.model.CallEntity
 import com.example.data.local.model.ContactEntity
 import com.example.data.local.model.ConversationEntity
 import com.example.data.local.model.DeviceSessionEntity
@@ -12,6 +14,8 @@ import com.example.data.local.model.MessageEntity
 import com.example.data.model.UserProfile
 import com.example.data.repository.ChatRepository
 import com.example.data.repository.FirebaseAuthRepository
+import com.example.util.ActiveCallSession
+import com.example.util.CallManager
 import com.example.util.ContactsSyncResult
 import com.example.util.ImageStorageHelper
 import com.example.util.NotificationPrivacyMode
@@ -31,6 +35,14 @@ import kotlinx.coroutines.launch
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
   val authRepository = FirebaseAuthRepository(application, viewModelScope)
   val repository = ChatRepository(application, viewModelScope, authRepository)
+  private val database = CipherDatabase.getDatabase(application, viewModelScope)
+
+  // HD+ Voice Call Manager
+  private val callManager = CallManager(application, database.callDao(), viewModelScope)
+  val activeCall: StateFlow<ActiveCallSession?> = callManager.activeCall
+  val waveformHeights: StateFlow<List<Float>> = callManager.waveformHeights
+  val callLogs: StateFlow<List<CallEntity>> = database.callDao().getAllCalls()
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
   val isOnline: StateFlow<Boolean> = repository.isOnline
 
@@ -43,7 +55,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
   // Phone OTP States
   val phoneVerificationId: StateFlow<String?> = authRepository.phoneVerificationId
   val pendingPhoneNumber: StateFlow<String?> = authRepository.pendingPhoneNumber
-  val testOtpCode: StateFlow<String?> = authRepository.testOtpCode
 
   // Contact Syncing State
   private val _isSyncingContacts = MutableStateFlow(false)
@@ -99,73 +110,113 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
   fun selectConversation(id: String?) {
     _selectedConversationId.value = id
-    repository.activeChatId.value = id
     if (id != null) {
-      repository.clearUnread(id)
+      repository.setActiveChat(id)
+      repository.markAsRead(id)
+    } else {
+      repository.setActiveChat(null)
     }
   }
 
-  fun toggleOnline() {
-    repository.toggleOnline()
-  }
-
-  fun sendMessage(
-    text: String,
-    mediaType: String = "TEXT",
-    mediaUri: String? = null,
-    mediaMeta: String? = null
-  ) {
-    val convId = _selectedConversationId.value ?: return
-    if (text.isBlank() && mediaUri == null) return
-    repository.sendMessage(convId, text.trim(), mediaType, mediaUri, mediaMeta)
+  fun sendMessage(text: String) {
+    val id = _selectedConversationId.value ?: return
+    repository.sendMessage(id, text)
   }
 
   fun sendRealImage(uri: Uri, caption: String = "") {
-    val convId = _selectedConversationId.value ?: return
+    val id = _selectedConversationId.value ?: return
     viewModelScope.launch {
-      val result = ImageStorageHelper.saveImageFromUri(getApplication(), uri) ?: return@launch
-      val file = result.first
-      val fileSize = result.second
-      val sizeFormatted = ImageStorageHelper.formatFileSize(fileSize)
-
-      val displayText = caption.ifBlank { "Sent an image" }
-      repository.sendMessage(
-        conversationId = convId,
-        text = displayText,
-        mediaType = "IMAGE",
-        mediaUri = file.absolutePath,
-        mediaMeta = "$sizeFormatted • Photo"
-      )
+      val saved = ImageStorageHelper.saveImageFromUri(getApplication(), uri)
+      if (saved != null) {
+        val fileUri = Uri.fromFile(saved.first).toString()
+        val sizeFormatted = ImageStorageHelper.formatFileSize(saved.second)
+        val text = if (caption.isNotBlank()) caption else "Photo ($sizeFormatted)"
+        repository.sendMessage(
+          conversationId = id,
+          text = text,
+          mediaType = "IMAGE",
+          mediaUri = fileUri,
+          mediaMeta = sizeFormatted
+        )
+      }
     }
   }
 
-  fun openInDefaultMessagingApp(phoneNumber: String, text: String) {
+  fun sendImageMessage(uri: Uri) {
+    sendRealImage(uri)
+  }
+
+  fun sendVoiceMessage(localPath: String, durationSecs: Int) {
+    val id = _selectedConversationId.value ?: return
+    repository.sendMessage(
+      conversationId = id,
+      text = "Voice message (${durationSecs}s)",
+      mediaType = "VOICE",
+      mediaUri = localPath,
+      mediaMeta = "$durationSecs"
+    )
+  }
+
+  fun openExternalSms(phoneNumber: String, text: String = "") {
     SmsHelper.openDefaultMessagingApp(getApplication(), phoneNumber, text)
   }
 
-  fun addContact(
-    name: String,
-    phoneNumber: String,
-    handle: String? = null,
-    onSuccess: (ContactEntity) -> Unit = {}
-  ) {
-    viewModelScope.launch {
-      val hasApp = authRepository.checkPhoneRegisteredOnFirebase(phoneNumber)
-      val contact = repository.addContact(name, phoneNumber, handle, hasApp)
-      onSuccess(contact)
-    }
+  fun createGroup(title: String, memberNames: List<String>, colorHex: Long) {
+    repository.createGroup(title, memberNames, colorHex)
   }
 
-  fun deleteContact(id: String) {
-    viewModelScope.launch {
-      repository.deleteContact(id)
-    }
+  fun createDirectChat(name: String, handle: String, colorHex: Long): String {
+    val id = repository.createDirectChat(name, handle, colorHex)
+    selectConversation(id)
+    return id
   }
 
   fun startChatWithContact(contact: ContactEntity) {
     viewModelScope.launch {
       val chatId = repository.startChatWithContact(contact)
       selectConversation(chatId)
+    }
+  }
+
+  // HD+ Voice Calling Actions
+  fun startVoiceCall(
+    contactName: String,
+    phoneNumber: String,
+    handle: String? = null,
+    avatarColorHex: Long = 0xFF0D9488
+  ) {
+    callManager.startOutgoingCall(contactName, phoneNumber, handle, avatarColorHex)
+  }
+
+  fun answerCall() {
+    callManager.answerIncomingCall()
+  }
+
+  fun endCall() {
+    callManager.endCall()
+  }
+
+  fun toggleCallMute() {
+    callManager.toggleMute()
+  }
+
+  fun toggleCallSpeaker() {
+    callManager.toggleSpeaker()
+  }
+
+  fun toggleCallMinimize(minimize: Boolean) {
+    callManager.toggleMinimize(minimize)
+  }
+
+  fun deleteCallLog(id: String) {
+    viewModelScope.launch {
+      database.callDao().deleteById(id)
+    }
+  }
+
+  fun clearAllCalls() {
+    viewModelScope.launch {
+      database.callDao().clearAll()
     }
   }
 
@@ -197,14 +248,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
-  // Phone Number OTP Sign-In
+  // Real Phone Number OTP Sign-In (No simulated or test codes)
   fun sendPhoneOtp(
     activity: Activity,
     phoneNumber: String,
-    onCodeSent: (verificationId: String, testCode: String?) -> Unit,
+    onCodeSent: (verificationId: String) -> Unit,
+    onAutoVerified: () -> Unit = {},
     onError: (String) -> Unit
   ) {
-    authRepository.sendPhoneOtp(activity, phoneNumber, onCodeSent, onError)
+    authRepository.sendPhoneOtp(activity, phoneNumber, onCodeSent, onAutoVerified, onError)
   }
 
   fun verifyPhoneOtp(
@@ -219,6 +271,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
       }
       onComplete(success, err)
     }
+  }
+
+  fun signOut() {
+    authRepository.signOut()
   }
 
   // Sync Contacts from Device
@@ -244,12 +300,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
-  fun signOut() {
-    authRepository.signOut()
-  }
-
-  fun toggleSafetyVerification(conversationId: String, currentVerified: Boolean) {
-    repository.toggleSafetyVerification(conversationId, currentVerified)
+  fun toggleOnline() {
+    repository.toggleOnline()
   }
 
   fun updateDisappearingTimer(conversationId: String, seconds: Int) {
@@ -260,12 +312,32 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     repository.clearChat(conversationId)
   }
 
-  fun createGroup(title: String, members: List<String>, colorHex: Long) {
-    repository.createGroup(title, members, colorHex)
+  fun togglePin(conversationId: String, isPinned: Boolean) {
+    repository.togglePin(conversationId, isPinned)
   }
 
-  fun createDirectChat(name: String, handle: String, colorHex: Long) {
-    repository.createDirectChat(name, handle, colorHex)
+  fun toggleSafetyVerification(conversationId: String, currentVerified: Boolean) {
+    repository.toggleSafetyVerification(conversationId, currentVerified)
+  }
+
+  fun addContact(name: String, phoneNumber: String, handle: String? = null, onComplete: (ContactEntity) -> Unit = {}) {
+    viewModelScope.launch {
+      val contact = repository.addContact(name, phoneNumber, handle)
+      onComplete(contact)
+    }
+  }
+
+  fun deleteContact(contactId: String) {
+    viewModelScope.launch {
+      repository.deleteContact(contactId)
+    }
+  }
+
+  fun deleteConversation(id: String) {
+    repository.deleteConversation(id)
+    if (_selectedConversationId.value == id) {
+      _selectedConversationId.value = null
+    }
   }
 
   fun linkDevice(name: String, platform: String) {

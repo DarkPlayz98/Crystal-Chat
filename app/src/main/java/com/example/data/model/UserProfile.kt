@@ -9,10 +9,10 @@ data class UserProfile(
   val photoUrl: String = "",
   val isOnline: Boolean = true,
   val updatedAt: Long = System.currentTimeMillis(),
-  val authProvider: String = "guest" // "google", "phone", "guest"
+  val authProvider: String = "phone" // "phone", "google"
 ) {
   val isGuest: Boolean
-    get() = authProvider == "guest" || uid.startsWith("guest_") || uid == "preview_test_uid"
+    get() = false
 
   val isGoogleAuth: Boolean
     get() = authProvider == "google"

@@ -68,3 +68,17 @@ data class ContactEntity(
   val hasApp: Boolean = false,
   val addedAt: Long = System.currentTimeMillis()
 )
+
+@Entity(tableName = "calls")
+data class CallEntity(
+  @PrimaryKey val id: String,
+  val contactName: String,
+  val phoneNumber: String,
+  val handle: String? = null,
+  val timestamp: Long = System.currentTimeMillis(),
+  val durationSeconds: Int = 0,
+  val callType: String = "OUTGOING", // "OUTGOING", "INCOMING", "MISSED"
+  val isHdVoice: Boolean = true,
+  val avatarColorHex: Long = 0xFF0D9488
+)
+

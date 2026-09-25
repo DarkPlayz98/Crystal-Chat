@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
+import com.example.data.local.model.CallEntity
 import com.example.data.local.model.ContactEntity
 import com.example.data.local.model.ConversationEntity
 import com.example.data.local.model.DeviceSessionEntity
@@ -51,6 +52,9 @@ interface ConversationDao {
 
   @Query("UPDATE conversations SET disappearingSeconds = :seconds WHERE id = :id")
   suspend fun updateDisappearingTimer(id: String, seconds: Int)
+
+  @Query("UPDATE conversations SET isPinned = :pinned WHERE id = :id")
+  suspend fun updatePinned(id: String, pinned: Boolean)
 
   @Query("DELETE FROM conversations WHERE id = :id")
   suspend fun deleteById(id: String)
@@ -133,3 +137,19 @@ interface ContactDao {
   @Query("DELETE FROM contacts WHERE id = :id")
   suspend fun deleteById(id: String)
 }
+
+@Dao
+interface CallDao {
+  @Query("SELECT * FROM calls ORDER BY timestamp DESC")
+  fun getAllCalls(): Flow<List<CallEntity>>
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun insert(call: CallEntity)
+
+  @Query("DELETE FROM calls WHERE id = :id")
+  suspend fun deleteById(id: String)
+
+  @Query("DELETE FROM calls")
+  suspend fun clearAll()
+}
+

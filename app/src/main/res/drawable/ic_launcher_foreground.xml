@@ -6,56 +6,53 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Crystal Base Chat Bubble Shadow / Subtle Glow -->
+    <!-- Soft Depth Shadow behind Bubble -->
     <path
-        android:pathData="M34,36 L74,36 C79.5,36 84,40.5 84,46 L84,66 C84,71.5 79.5,76 74,76 L56,76 L44,85 L44,76 L34,76 C28.5,76 24,71.5 24,46 C24,40.5 28.5,36 34,36 Z"
-        android:fillColor="#16202E" />
+        android:pathData="M34,31 C27.5,31 22,36.5 22,43 L22,65 C22,71.5 27.5,77 34,77 L38,77 L38,85 C38,86.5 39.8,87.3 41,86.2 L52,77 L74,77 C80.5,77 86,71.5 86,65 L86,43 C86,36.5 80.5,31 74,31 Z"
+        android:fillColor="#15000000" />
 
-    <!-- Crystal Chat Bubble Body -->
+    <!-- Pure White Modern Messaging Chat Bubble -->
     <path
-        android:pathData="M35,38 L73,38 C77.4,38 81,41.6 81,46 L81,65 C81,69.4 77.4,73 73,73 L55,73 L45,81 L45,73 L35,73 C30.6,73 27,69.4 27,65 L27,46 C27,41.6 30.6,38 35,38 Z">
+        android:pathData="M34,30 C27.5,30 22,35.5 22,42 L22,64 C22,70.5 27.5,76 34,76 L38,76 L38,84 C38,85.5 39.8,86.3 41,85.2 L52,76 L74,76 C80.5,76 86,70.5 86,64 L86,42 C86,35.5 80.5,30 74,30 Z"
+        android:fillColor="#FFFFFF" />
+
+    <!-- Crystal Chat Brand Gradient Core: Dynamic Speech & Signal Emblem -->
+    <!-- Central Crystal Diamond Accent inside the bubble -->
+    <path
+        android:pathData="M54,41 L64,51 L54,55 L44,51 Z">
         <aapt:attr name="android:fillColor">
             <gradient
-                android:startX="27"
-                android:startY="38"
-                android:endX="81"
-                android:endY="81"
-                android:type="linear">
-                <item android:offset="0.0" android:color="#1E293B" />
-                <item android:offset="1.0" android:color="#0F172A" />
-            </gradient>
-        </aapt:attr>
-    </path>
-
-    <!-- Crystal Prism Top Facet -->
-    <path
-        android:pathData="M54,42 L67,52 L54,55 L41,52 Z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:startX="41"
-                android:startY="42"
-                android:endX="67"
+                android:startX="44"
+                android:startY="41"
+                android:endX="64"
                 android:endY="55"
                 android:type="linear">
-                <item android:offset="0.0" android:color="#7DD3FC" />
-                <item android:offset="1.0" android:color="#38BDF8" />
+                <item android:offset="0.0" android:color="#0284C7" />
+                <item android:offset="1.0" android:color="#0EA5E9" />
             </gradient>
         </aapt:attr>
     </path>
 
-    <!-- Crystal Left Facet -->
     <path
-        android:pathData="M41,52 L54,55 L54,69 Z"
-        android:fillColor="#0284C7" />
-
-    <!-- Crystal Right Facet -->
-    <path
-        android:pathData="M67,52 L54,55 L54,69 Z"
+        android:pathData="M44,51 L54,55 L54,65 Z"
         android:fillColor="#0369A1" />
 
-    <!-- Crystal Center Highlight Sparkle -->
     <path
-        android:pathData="M54,46 L55.5,50 L59,51 L55.5,52 L54,56 L52.5,52 L49,51 L52.5,50 Z"
+        android:pathData="M64,51 L54,55 L54,65 Z"
+        android:fillColor="#0284C7" />
+
+    <!-- Sparkle Highlight on Crystal -->
+    <path
+        android:pathData="M54,45 L55.5,48.5 L59,50 L55.5,51.5 L54,55 L52.5,51.5 L49,50 L52.5,48.5 Z"
         android:fillColor="#FFFFFF" />
+
+    <!-- Three Modern Messaging Dots (Active Conversation Indicator) below -->
+    <path
+        android:pathData="M37,60 A 2.2,2.2 0 1,0 41.4,60 A 2.2,2.2 0 1,0 37,60 Z"
+        android:fillColor="#38BDF8" />
+
+    <path
+        android:pathData="M66.6,60 A 2.2,2.2 0 1,0 71,60 A 2.2,2.2 0 1,0 66.6,60 Z"
+        android:fillColor="#38BDF8" />
 
 </vector>
