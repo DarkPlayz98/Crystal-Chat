@@ -56,8 +56,8 @@ object SmsHelper {
         false
       }
     } else {
-      Log.i(TAG, "SEND_SMS permission not granted; processed as simulated in-app delivery without redirecting sender")
-      return false
+      Log.i(TAG, "SEND_SMS permission not declared; opening default messaging app for SMS dispatch")
+      return openDefaultMessagingApp(context, cleanPhone, messageText)
     }
   }
 
