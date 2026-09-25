@@ -261,18 +261,23 @@ fun ChatDetailScreen(
 
           IconButton(
             onClick = {
-              viewModel.startVoiceCall(
-                contactName = activeConv.title,
-                phoneNumber = activeConv.phoneNumber ?: activeConv.title,
-                handle = activeConv.participantHandles,
-                avatarColorHex = activeConv.avatarColorHex
-              )
+              if (activeConv.isExternalSms) {
+                viewModel.dialWithDefaultCallerApp(activeConv.phoneNumber ?: activeConv.title)
+              } else {
+                viewModel.startVoiceCall(
+                  contactName = activeConv.title,
+                  phoneNumber = activeConv.phoneNumber ?: activeConv.title,
+                  handle = activeConv.participantHandles,
+                  avatarColorHex = activeConv.avatarColorHex,
+                  recipientHasApp = true
+                )
+              }
             },
             modifier = Modifier.testTag("chat_voice_call_button")
           ) {
             Icon(
               imageVector = Icons.Default.Call,
-              contentDescription = "HD+ Voice Call",
+              contentDescription = if (activeConv.isExternalSms) "Call with Default Phone App" else "HD+ Voice Call",
               tint = MaterialTheme.colorScheme.primary
             )
           }
@@ -337,7 +342,7 @@ fun ChatDetailScreen(
             )
             Spacer(modifier = Modifier.width(10.dp))
             Text(
-              text = "Receiver does not have app • They receive your texts in their default SMS app (${activeConv.phoneNumber ?: "Phone"}). You chat entirely within Crystal Chat.",
+              text = "Recipient does not have the app. Tapping Call dials via your default Phone app, and messages send via your default SMS app (${activeConv.phoneNumber ?: "Phone"}).",
               style = MaterialTheme.typography.bodySmall,
               color = MaterialTheme.colorScheme.onSurface,
               lineHeight = 16.sp,
@@ -494,7 +499,11 @@ fun ChatDetailScreen(
           IconButton(
             onClick = {
               if (inputText.isNotBlank()) {
-                viewModel.sendMessage(inputText)
+                if (activeConv.isExternalSms) {
+                  viewModel.openDefaultSms(activeConv.phoneNumber ?: activeConv.title, inputText)
+                } else {
+                  viewModel.sendMessage(inputText)
+                }
                 inputText = ""
               }
             },
@@ -506,8 +515,8 @@ fun ChatDetailScreen(
               .testTag("send_button")
           ) {
             Icon(
-              imageVector = Icons.AutoMirrored.Filled.Send,
-              contentDescription = "Send message",
+              imageVector = if (activeConv.isExternalSms) Icons.Default.Sms else Icons.AutoMirrored.Filled.Send,
+              contentDescription = if (activeConv.isExternalSms) "Send with Default SMS App" else "Send message",
               tint = if (inputText.isNotBlank()) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
               modifier = Modifier.size(20.dp)
             )

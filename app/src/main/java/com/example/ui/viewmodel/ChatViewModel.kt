@@ -55,6 +55,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
   // Phone OTP States
   val phoneVerificationId: StateFlow<String?> = authRepository.phoneVerificationId
   val pendingPhoneNumber: StateFlow<String?> = authRepository.pendingPhoneNumber
+  val isApiKeyRestricted: StateFlow<Boolean> = authRepository.isApiKeyRestricted
 
   // Contact Syncing State
   private val _isSyncingContacts = MutableStateFlow(false)
@@ -183,9 +184,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     contactName: String,
     phoneNumber: String,
     handle: String? = null,
-    avatarColorHex: Long = 0xFF0D9488
+    avatarColorHex: Long = 0xFF0D9488,
+    recipientHasApp: Boolean = true
   ) {
-    callManager.startOutgoingCall(contactName, phoneNumber, handle, avatarColorHex)
+    if (!recipientHasApp) {
+      dialWithDefaultCallerApp(phoneNumber)
+    } else {
+      callManager.startOutgoingCall(contactName, phoneNumber, handle, avatarColorHex, recipientHasApp = true)
+    }
+  }
+
+  fun dialWithDefaultCallerApp(phoneNumber: String) {
+    CallManager.dialWithDefaultCallerApp(getApplication(), phoneNumber)
+  }
+
+  fun openDefaultSms(phoneNumber: String, text: String = "") {
+    SmsHelper.openDefaultMessagingApp(getApplication(), phoneNumber, text)
+  }
+
+  fun playDtmfTone(digit: Char) {
+    callManager.playDtmfTone(digit)
   }
 
   fun answerCall() {
@@ -273,6 +291,30 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
+  fun sendDeviceSecurityOtp(
+    phoneNumber: String,
+    onCodeSent: (verificationId: String, codeSent: String) -> Unit
+  ) {
+    authRepository.sendDeviceSecurityOtp(phoneNumber, onCodeSent)
+  }
+
+  fun setCustomFirebaseApiKey(apiKey: String, projectId: String? = null): Boolean {
+    return authRepository.setCustomFirebaseApiKey(apiKey, projectId)
+  }
+
+  fun getGoogleSystemPickerIntent(): android.content.Intent {
+    return authRepository.getGoogleSystemPickerIntent()
+  }
+
+  fun handleGoogleAccountPicked(accountEmail: String, onComplete: (Boolean) -> Unit) {
+    authRepository.handleGoogleAccountPicked(accountEmail) { success ->
+      if (success) {
+        syncContacts()
+      }
+      onComplete(success)
+    }
+  }
+
   fun signOut() {
     authRepository.signOut()
   }
@@ -330,6 +372,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
   fun deleteContact(contactId: String) {
     viewModelScope.launch {
       repository.deleteContact(contactId)
+    }
+  }
+
+  fun toggleContactHasApp(contactId: String, currentHasApp: Boolean) {
+    viewModelScope.launch {
+      repository.updateContactHasApp(contactId, !currentHasApp)
     }
   }
 

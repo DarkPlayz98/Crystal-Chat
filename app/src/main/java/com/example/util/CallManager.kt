@@ -1,7 +1,14 @@
 package com.example.util
 
 import android.content.Context
+import android.content.Intent
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.media.Ringtone
+import android.media.RingtoneManager
+import android.media.ToneGenerator
+import android.net.Uri
+import android.os.Build
 import android.util.Log
 import com.example.data.local.dao.CallDao
 import com.example.data.local.model.CallEntity
@@ -37,7 +44,8 @@ data class ActiveCallSession(
   val isSpeakerOn: Boolean = false,
   val isHdVoice: Boolean = true,
   val isMinimized: Boolean = false,
-  val statusMessage: String = ""
+  val statusMessage: String = "",
+  val recipientHasApp: Boolean = true
 )
 
 class CallManager(
@@ -47,6 +55,22 @@ class CallManager(
 ) {
   companion object {
     private const val TAG = "CallManager"
+
+    /**
+     * Dials a number using the device's default system phone / caller app.
+     */
+    fun dialWithDefaultCallerApp(context: Context, phoneNumber: String) {
+      try {
+        val cleanNumber = phoneNumber.trim().replace(" ", "")
+        val intent = Intent(Intent.ACTION_DIAL).apply {
+          data = Uri.parse("tel:$cleanNumber")
+          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to launch default caller app: ${e.message}", e)
+      }
+    }
   }
 
   private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
@@ -54,20 +78,34 @@ class CallManager(
   private val _activeCall = MutableStateFlow<ActiveCallSession?>(null)
   val activeCall: StateFlow<ActiveCallSession?> = _activeCall.asStateFlow()
 
-  // Audio wave visualization amplitude for HD+ voice visualizer
+  // Dynamic visualizer amplitudes for HD+ voice visualizer
   private val _waveformHeights = MutableStateFlow(List(16) { 0.2f })
   val waveformHeights: StateFlow<List<Float>> = _waveformHeights.asStateFlow()
 
   private var timerJob: Job? = null
   private var waveJob: Job? = null
-  private var simulatedPickupJob: Job? = null
+  private var ringtoneJob: Job? = null
 
+  private var ringtonePlayer: Ringtone? = null
+  private var toneGenerator: ToneGenerator? = null
+
+  /**
+   * Starts an outgoing call.
+   * If recipient does not have the app, caller app should be launched instead.
+   */
   fun startOutgoingCall(
     contactName: String,
     phoneNumber: String,
     handle: String? = null,
-    avatarColorHex: Long = 0xFF0D9488
+    avatarColorHex: Long = 0xFF0D9488,
+    recipientHasApp: Boolean = true
   ) {
+    // If recipient does NOT have the app, launch the default caller app directly!
+    if (!recipientHasApp) {
+      dialWithDefaultCallerApp(context, phoneNumber)
+      return
+    }
+
     val callId = "call_${UUID.randomUUID().toString().take(8)}"
     val session = ActiveCallSession(
       callId = callId,
@@ -76,38 +114,123 @@ class CallManager(
       handle = handle,
       avatarColorHex = avatarColorHex,
       status = CallStateStatus.OUTGOING_RINGING,
-      statusMessage = "Calling with HD+ Voice..."
+      statusMessage = "Ringing (Crystal HD+ Audio)...",
+      recipientHasApp = true
     )
     _activeCall.value = session
 
-    try {
-      audioManager?.mode = AudioManager.MODE_IN_COMMUNICATION
-      audioManager?.isMicrophoneMute = false
-    } catch (e: Exception) {
-      Log.w(TAG, "AudioManager setup failed: ${e.message}")
-    }
-
+    setupAudioForCall()
     startWaveformAnimation()
+    startCallerRingtone()
+  }
 
-    // Seamless connection: simulate pickup after 3 seconds for immediate voice readiness
-    simulatedPickupJob?.cancel()
-    simulatedPickupJob = scope.launch(Dispatchers.Default) {
-      delay(2800)
-      if (_activeCall.value?.status == CallStateStatus.OUTGOING_RINGING) {
-        connectCall()
+  /**
+   * Plays the actual caller ringtone / telephone ringback cadence so the caller hears real ringing.
+   */
+  private fun startCallerRingtone() {
+    stopRingtone()
+    ringtoneJob?.cancel()
+    ringtoneJob = scope.launch(Dispatchers.Default) {
+      try {
+        // Initialize tone generator for authentic telephony ringback tone
+        toneGenerator = ToneGenerator(AudioManager.STREAM_VOICE_CALL, 85)
+
+        // Try getting system ringtone as secondary audio
+        try {
+          val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+          ringtonePlayer = RingtoneManager.getRingtone(context, ringtoneUri)
+        } catch (e: Exception) {
+          Log.w(TAG, "RingtoneManager: ${e.message}")
+        }
+
+        // Standard telephony cadence: ring 2 seconds, pause 3.5 seconds
+        while (isActive && _activeCall.value?.status == CallStateStatus.OUTGOING_RINGING) {
+          try {
+            toneGenerator?.startTone(ToneGenerator.TONE_SUP_RINGTONE, 2000)
+            ringtonePlayer?.play()
+          } catch (e: Exception) {
+            Log.w(TAG, "Tone playback error: ${e.message}")
+          }
+          delay(2000)
+          ringtonePlayer?.stop()
+          delay(3000)
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "Caller ringtone loop failed: ${e.message}", e)
       }
     }
   }
 
+  private fun stopRingtone() {
+    ringtoneJob?.cancel()
+    ringtoneJob = null
+    try {
+      toneGenerator?.stopTone()
+      toneGenerator?.release()
+    } catch (e: Exception) {
+      // Ignore cleanup
+    }
+    toneGenerator = null
+
+    try {
+      if (ringtonePlayer?.isPlaying == true) {
+        ringtonePlayer?.stop()
+      }
+    } catch (e: Exception) {
+      // Ignore cleanup
+    }
+    ringtonePlayer = null
+  }
+
+  /**
+   * Plays audible DTMF tone when keypad digits are pressed during a call.
+   */
+  fun playDtmfTone(digit: Char) {
+    scope.launch(Dispatchers.Default) {
+      try {
+        val tg = ToneGenerator(AudioManager.STREAM_VOICE_CALL, 80)
+        val tone = when (digit) {
+          '0' -> ToneGenerator.TONE_DTMF_0
+          '1' -> ToneGenerator.TONE_DTMF_1
+          '2' -> ToneGenerator.TONE_DTMF_2
+          '3' -> ToneGenerator.TONE_DTMF_3
+          '4' -> ToneGenerator.TONE_DTMF_4
+          '5' -> ToneGenerator.TONE_DTMF_5
+          '6' -> ToneGenerator.TONE_DTMF_6
+          '7' -> ToneGenerator.TONE_DTMF_7
+          '8' -> ToneGenerator.TONE_DTMF_8
+          '9' -> ToneGenerator.TONE_DTMF_9
+          '*' -> ToneGenerator.TONE_DTMF_S
+          '#' -> ToneGenerator.TONE_DTMF_P
+          else -> ToneGenerator.TONE_PROP_BEEP
+        }
+        tg.startTone(tone, 150)
+        delay(160)
+        tg.release()
+      } catch (e: Exception) {
+        Log.w(TAG, "DTMF error: ${e.message}")
+      }
+    }
+  }
+
+  /**
+   * User or remote party answers the call.
+   */
   fun answerIncomingCall() {
     connectCall()
   }
 
-  private fun connectCall() {
+  /**
+   * Connects the active voice session.
+   */
+  fun connectCall() {
     val curr = _activeCall.value ?: return
+    stopRingtone()
+
     _activeCall.value = curr.copy(
       status = CallStateStatus.CONNECTED,
-      statusMessage = "HD+ Voice Connected (Opus 48kHz)"
+      statusMessage = "Crystal HD+ Voice Connected"
     )
 
     timerJob?.cancel()
@@ -136,7 +259,26 @@ class CallManager(
     val curr = _activeCall.value ?: return
     val newSpeaker = !curr.isSpeakerOn
     try {
-      audioManager?.isSpeakerphoneOn = newSpeaker
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (newSpeaker) {
+          val speakerDevice = audioManager?.availableCommunicationDevices?.firstOrNull {
+            it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+          }
+          if (speakerDevice != null) {
+            audioManager?.setCommunicationDevice(speakerDevice)
+          } else {
+            @Suppress("DEPRECATION")
+            audioManager?.isSpeakerphoneOn = true
+          }
+        } else {
+          audioManager?.clearCommunicationDevice()
+          @Suppress("DEPRECATION")
+          audioManager?.isSpeakerphoneOn = false
+        }
+      } else {
+        @Suppress("DEPRECATION")
+        audioManager?.isSpeakerphoneOn = newSpeaker
+      }
     } catch (e: Exception) {
       Log.w(TAG, "Speaker toggle: ${e.message}")
     }
@@ -152,7 +294,19 @@ class CallManager(
     val curr = _activeCall.value ?: return
     timerJob?.cancel()
     waveJob?.cancel()
-    simulatedPickupJob?.cancel()
+    stopRingtone()
+
+    // Play call-end disconnect tone
+    scope.launch(Dispatchers.Default) {
+      try {
+        val tg = ToneGenerator(AudioManager.STREAM_VOICE_CALL, 70)
+        tg.startTone(ToneGenerator.TONE_PROP_PROMPT, 200)
+        delay(220)
+        tg.release()
+      } catch (e: Exception) {
+        // Ignore
+      }
+    }
 
     val duration = curr.durationSeconds
     val entity = CallEntity(
@@ -171,39 +325,59 @@ class CallManager(
       callDao.insert(entity)
     }
 
-    try {
-      audioManager?.mode = AudioManager.MODE_NORMAL
-      audioManager?.isSpeakerphoneOn = false
-      audioManager?.isMicrophoneMute = false
-    } catch (e: Exception) {
-      Log.w(TAG, "AudioManager reset: ${e.message}")
-    }
-
     _activeCall.value = curr.copy(
       status = CallStateStatus.ENDED,
       statusMessage = reason
     )
 
+    resetAudio()
+
     scope.launch(Dispatchers.Default) {
-      delay(1200)
+      delay(700)
       _activeCall.value = null
+    }
+  }
+
+  private fun setupAudioForCall() {
+    try {
+      audioManager?.mode = AudioManager.MODE_IN_COMMUNICATION
+      audioManager?.isMicrophoneMute = false
+    } catch (e: Exception) {
+      Log.w(TAG, "setupAudioForCall: ${e.message}")
+    }
+  }
+
+  private fun resetAudio() {
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        audioManager?.clearCommunicationDevice()
+      }
+      @Suppress("DEPRECATION")
+      audioManager?.isSpeakerphoneOn = false
+      audioManager?.isMicrophoneMute = false
+      audioManager?.mode = AudioManager.MODE_NORMAL
+    } catch (e: Exception) {
+      Log.w(TAG, "resetAudio: ${e.message}")
     }
   }
 
   private fun startWaveformAnimation() {
     waveJob?.cancel()
     waveJob = scope.launch(Dispatchers.Default) {
-      while (isActive && _activeCall.value != null) {
-        val session = _activeCall.value
-        if (session?.status == CallStateStatus.CONNECTED && !session.isMuted) {
-          _waveformHeights.value = List(16) { Random.nextFloat().coerceIn(0.15f, 0.95f) }
-        } else if (session?.status == CallStateStatus.OUTGOING_RINGING) {
-          val phase = (System.currentTimeMillis() % 1500) / 1500f
-          val wave = (kotlin.math.sin(phase * 2 * Math.PI) * 0.35f + 0.5f).toFloat()
-          _waveformHeights.value = List(16) { wave.coerceIn(0.2f, 0.85f) }
-        } else {
-          _waveformHeights.value = List(16) { 0.15f }
+      while (isActive && (_activeCall.value?.status == CallStateStatus.OUTGOING_RINGING ||
+          _activeCall.value?.status == CallStateStatus.CONNECTED)) {
+        val isMuted = _activeCall.value?.isMuted == true
+        val isConnected = _activeCall.value?.status == CallStateStatus.CONNECTED
+        val newList = List(16) { index ->
+          if (isMuted) {
+            0.08f
+          } else if (isConnected) {
+            0.2f + Random.nextFloat() * 0.75f
+          } else {
+            0.15f + ((index % 4) * 0.12f)
+          }
         }
+        _waveformHeights.value = newList
         delay(90)
       }
     }

@@ -383,18 +383,30 @@ fun ContactsScreen(
             ContactRowItem(
               contact = contact,
               onMessageClick = {
-                viewModel.startChatWithContact(contact)
+                if (contact.hasApp) {
+                  viewModel.startChatWithContact(contact)
+                } else {
+                  viewModel.openDefaultSms(contact.phoneNumber)
+                }
               },
               onCallClick = {
-                viewModel.startVoiceCall(
-                  contactName = contact.name,
-                  phoneNumber = contact.phoneNumber,
-                  handle = contact.handle,
-                  avatarColorHex = contact.avatarColorHex
-                )
+                if (contact.hasApp) {
+                  viewModel.startVoiceCall(
+                    contactName = contact.name,
+                    phoneNumber = contact.phoneNumber,
+                    handle = contact.handle,
+                    avatarColorHex = contact.avatarColorHex,
+                    recipientHasApp = true
+                  )
+                } else {
+                  viewModel.dialWithDefaultCallerApp(contact.phoneNumber)
+                }
+              },
+              onToggleHasApp = {
+                viewModel.toggleContactHasApp(contact.id, contact.hasApp)
               },
               onDirectSmsClick = {
-                SmsHelper.openDefaultMessagingApp(context, contact.phoneNumber, "")
+                viewModel.openDefaultSms(contact.phoneNumber)
               },
               onDelete = {
                 viewModel.deleteContact(contact.id)
@@ -432,6 +444,7 @@ fun ContactRowItem(
   contact: ContactEntity,
   onMessageClick: () -> Unit,
   onCallClick: () -> Unit,
+  onToggleHasApp: () -> Unit,
   onDirectSmsClick: () -> Unit,
   onDelete: () -> Unit
 ) {
@@ -504,24 +517,24 @@ fun ContactRowItem(
         // Badge indicator
         Surface(
           shape = RoundedCornerShape(6.dp),
-          color = if (contact.hasApp) Color(0xFF10B981).copy(alpha = 0.12f) else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+          color = if (contact.hasApp) Color(0xFF10B981).copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant
         ) {
           Row(
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically
           ) {
             Icon(
-              imageVector = Icons.AutoMirrored.Filled.Chat,
+              imageVector = if (contact.hasApp) Icons.AutoMirrored.Filled.Chat else Icons.Default.Phone,
               contentDescription = null,
-              tint = if (contact.hasApp) Color(0xFF10B981) else MaterialTheme.colorScheme.primary,
+              tint = if (contact.hasApp) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurfaceVariant,
               modifier = Modifier.size(11.dp)
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(
-              text = if (contact.hasApp) "Crystal Chat User" else "End-to-End Encrypted",
+              text = if (contact.hasApp) "Crystal User (In-App)" else "Phone Contact (Default Apps)",
               fontSize = 11.sp,
               fontWeight = FontWeight.Medium,
-              color = if (contact.hasApp) Color(0xFF10B981) else MaterialTheme.colorScheme.primary
+              color = if (contact.hasApp) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurfaceVariant
             )
           }
         }
@@ -534,8 +547,8 @@ fun ContactRowItem(
       ) {
         Icon(
           imageVector = Icons.Default.Call,
-          contentDescription = "HD+ Voice Call",
-          tint = MaterialTheme.colorScheme.primary
+          contentDescription = if (contact.hasApp) "HD+ Voice Call" else "Call with Default Phone App",
+          tint = if (contact.hasApp) Color(0xFF10B981) else MaterialTheme.colorScheme.primary
         )
       }
 
@@ -545,9 +558,9 @@ fun ContactRowItem(
         modifier = Modifier.testTag("contact_message_button")
       ) {
         Icon(
-          imageVector = Icons.AutoMirrored.Filled.Chat,
-          contentDescription = "Chat",
-          tint = MaterialTheme.colorScheme.primary
+          imageVector = if (contact.hasApp) Icons.AutoMirrored.Filled.Chat else Icons.Default.Sms,
+          contentDescription = if (contact.hasApp) "Encrypted Chat" else "Message with Default SMS App",
+          tint = if (contact.hasApp) Color(0xFF10B981) else MaterialTheme.colorScheme.primary
         )
       }
 
@@ -564,6 +577,20 @@ fun ContactRowItem(
           expanded = showMenu,
           onDismissRequest = { showMenu = false }
         ) {
+          DropdownMenuItem(
+            text = { Text(if (contact.hasApp) "Switch to Phone Contact" else "Mark as Crystal User") },
+            onClick = {
+              showMenu = false
+              onToggleHasApp()
+            }
+          )
+          DropdownMenuItem(
+            text = { Text("Open Default SMS") },
+            onClick = {
+              showMenu = false
+              onDirectSmsClick()
+            }
+          )
           DropdownMenuItem(
             text = { Text("Delete Contact", color = MaterialTheme.colorScheme.error) },
             leadingIcon = { Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error) },

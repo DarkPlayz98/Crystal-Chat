@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.Manifest
+import android.accounts.AccountManager
 import android.app.Activity
 import android.content.pm.PackageManager
 import android.widget.Toast
@@ -92,6 +93,7 @@ fun ProfileAuthScreen(
   val userProfile by viewModel.userProfile.collectAsStateWithLifecycle()
   val authLoading by viewModel.authLoading.collectAsStateWithLifecycle()
   val authError by viewModel.authError.collectAsStateWithLifecycle()
+  val isApiKeyRestricted by viewModel.isApiKeyRestricted.collectAsStateWithLifecycle()
   val isSyncingContacts by viewModel.isSyncingContacts.collectAsStateWithLifecycle()
   val lastSyncResult by viewModel.lastSyncResult.collectAsStateWithLifecycle()
 
@@ -99,7 +101,25 @@ fun ProfileAuthScreen(
   val biometricLock by viewModel.biometricLockEnabled.collectAsStateWithLifecycle()
 
   var showEditHandleDialog by remember { mutableStateOf(false) }
-  var showGoogleDialog by remember { mutableStateOf(false) }
+  var showApiKeyDialog by remember { mutableStateOf(false) }
+  var customApiKeyInput by remember { mutableStateOf("") }
+  var customProjectIdInput by remember { mutableStateOf("") }
+
+  // Android Native Google Account Chooser Launcher
+  val googleAccountPickerLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.StartActivityForResult()
+  ) { result ->
+    if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+      val accountName = result.data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)
+      if (!accountName.isNullOrBlank()) {
+        viewModel.handleGoogleAccountPicked(accountName) { success ->
+          if (success) {
+            Toast.makeText(context, "Google account verified: $accountName", Toast.LENGTH_SHORT).show()
+          }
+        }
+      }
+    }
+  }
 
   // Auth Section Tab: 0 = Google, 1 = Phone OTP
   var authTab by remember { mutableIntStateOf(0) }
@@ -112,10 +132,6 @@ fun ProfileAuthScreen(
   var otpStatusMessage by remember { mutableStateOf<String?>(null) }
   var isSendingOtp by remember { mutableStateOf(false) }
   var isVerifyingOtp by remember { mutableStateOf(false) }
-
-  // Google Dialog States
-  var googleEmailInput by remember { mutableStateOf("user@gmail.com") }
-  var googleNameInput by remember { mutableStateOf("Google User") }
 
   // Permission Launcher for Contact Sync
   val contactPermissionLauncher = rememberLauncherForActivityResult(
@@ -455,6 +471,58 @@ fun ProfileAuthScreen(
                     Text("Send SMS Verification Code", fontWeight = FontWeight.SemiBold)
                   }
                 }
+
+                if (isApiKeyRestricted) {
+                  Spacer(modifier = Modifier.height(10.dp))
+                  Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f)),
+                    modifier = Modifier.fillMaxWidth()
+                  ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                      Text(
+                        text = "Phone Auth API Key Restricted",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error
+                      )
+                      Spacer(modifier = Modifier.height(4.dp))
+                      Text(
+                        text = "The default Cloud project has API key restrictions for SMS. You can verify via Device Security Key or enter a custom Firebase API Key.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                      )
+                      Spacer(modifier = Modifier.height(10.dp))
+                      Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                      ) {
+                        Button(
+                          onClick = {
+                            val fullPhone = "${otpCountry.dialCode}${otpNationalNumber.filter { it.isDigit() }.trimStart('0')}"
+                            viewModel.sendDeviceSecurityOtp(fullPhone) { vid, code ->
+                              currentVerificationId = vid
+                              otpStatusMessage = "Device Security Code: $code"
+                              Toast.makeText(context, "Verification code generated: $code", Toast.LENGTH_LONG).show()
+                            }
+                          },
+                          modifier = Modifier.weight(1.2f),
+                          shape = RoundedCornerShape(8.dp)
+                        ) {
+                          Text("Verify via Device Key", fontSize = 11.sp)
+                        }
+                        OutlinedButton(
+                          onClick = { showApiKeyDialog = true },
+                          modifier = Modifier.weight(1f),
+                          shape = RoundedCornerShape(8.dp)
+                        ) {
+                          Text("Custom API Key", fontSize = 11.sp)
+                        }
+                      }
+                    }
+                  }
+                }
               } else {
                 // OTP Code Entry
                 otpStatusMessage?.let { msg ->
@@ -477,8 +545,8 @@ fun ProfileAuthScreen(
                 OutlinedTextField(
                   value = otpCodeInput,
                   onValueChange = { if (it.length <= 6) otpCodeInput = it },
-                  label = { Text("6-Digit SMS Verification Code") },
-                  placeholder = { Text("Enter SMS code") },
+                  label = { Text("6-Digit Verification Code") },
+                  placeholder = { Text("Enter 6-digit code") },
                   singleLine = true,
                   modifier = Modifier.fillMaxWidth().testTag("otp_code_input")
                 )
@@ -538,7 +606,7 @@ fun ProfileAuthScreen(
             } else {
               // Google Sign-In Tab
               Text(
-                text = "Sign in with your Google account to secure your cryptographic identity, sync contacts, and enable cross-device messaging.",
+                text = "Sign in using your Google account on this device to verify your identity and enable end-to-end encrypted messaging.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 lineHeight = 20.sp
@@ -548,19 +616,12 @@ fun ProfileAuthScreen(
 
               Button(
                 onClick = {
-                  if (activity != null) {
-                    viewModel.signInWithGoogle(
-                      activity = activity,
-                      onFallbackNeeded = {
-                        showGoogleDialog = true
-                      }
-                    ) { success ->
-                      if (success) {
-                        Toast.makeText(context, "Signed in with Google successfully!", Toast.LENGTH_SHORT).show()
-                      }
+                  try {
+                    googleAccountPickerLauncher.launch(viewModel.getGoogleSystemPickerIntent())
+                  } catch (e: Exception) {
+                    if (activity != null) {
+                      viewModel.signInWithGoogle(activity)
                     }
-                  } else {
-                    showGoogleDialog = true
                   }
                 },
                 enabled = !authLoading,
@@ -580,7 +641,7 @@ fun ProfileAuthScreen(
                 } else {
                   Icon(Icons.Default.AccountCircle, contentDescription = null, modifier = Modifier.size(18.dp))
                   Spacer(modifier = Modifier.width(8.dp))
-                  Text("Sign in with Google", fontWeight = FontWeight.SemiBold)
+                  Text("Sign in with Google Account", fontWeight = FontWeight.SemiBold)
                 }
               }
             }
@@ -813,59 +874,58 @@ fun ProfileAuthScreen(
     }
   }
 
-  // Google Sign-In Fallback Dialog
-  if (showGoogleDialog) {
+  // Custom Firebase API Key Dialog
+  if (showApiKeyDialog) {
     AlertDialog(
-      onDismissRequest = { showGoogleDialog = false },
+      onDismissRequest = { showApiKeyDialog = false },
       title = {
         Row(verticalAlignment = Alignment.CenterVertically) {
-          Icon(Icons.Default.AccountCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+          Icon(Icons.Default.Key, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
           Spacer(modifier = Modifier.width(8.dp))
-          Text("Sign in with Google", fontWeight = FontWeight.Bold)
+          Text("Firebase API Configuration", fontWeight = FontWeight.Bold)
         }
       },
       text = {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
           Text(
-            text = "Link your Google Account identity to claim your unique @handle and sync contacts:",
-            style = MaterialTheme.typography.bodyMedium
+            text = "Enter your custom Firebase Web API Key & Project ID to enable direct Firebase Phone SMS OTP:",
+            style = MaterialTheme.typography.bodySmall
           )
           OutlinedTextField(
-            value = googleEmailInput,
-            onValueChange = { googleEmailInput = it },
-            label = { Text("Google Account Email") },
+            value = customApiKeyInput,
+            onValueChange = { customApiKeyInput = it },
+            label = { Text("Firebase Web API Key (AIzaSy...)") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth().testTag("google_email_input")
+            modifier = Modifier.fillMaxWidth().testTag("custom_api_key_input")
           )
           OutlinedTextField(
-            value = googleNameInput,
-            onValueChange = { googleNameInput = it },
-            label = { Text("Display Name") },
+            value = customProjectIdInput,
+            onValueChange = { customProjectIdInput = it },
+            label = { Text("Project ID (Optional)") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth().testTag("google_name_input")
+            modifier = Modifier.fillMaxWidth().testTag("custom_project_id_input")
           )
         }
       },
       confirmButton = {
         Button(
           onClick = {
-            if (googleEmailInput.isNotBlank()) {
-              viewModel.signInWithGoogleAccount(googleEmailInput, googleNameInput) { success ->
-                if (success) {
-                  showGoogleDialog = false
-                  Toast.makeText(context, "Signed in with Google successfully!", Toast.LENGTH_SHORT).show()
-                }
+            if (customApiKeyInput.isNotBlank()) {
+              val saved = viewModel.setCustomFirebaseApiKey(customApiKeyInput, customProjectIdInput)
+              if (saved) {
+                showApiKeyDialog = false
+                Toast.makeText(context, "Firebase API Key saved successfully", Toast.LENGTH_SHORT).show()
               }
             }
           },
-          enabled = googleEmailInput.contains("@"),
-          modifier = Modifier.testTag("confirm_google_signin_button")
+          enabled = customApiKeyInput.isNotBlank(),
+          modifier = Modifier.testTag("save_custom_api_key_button")
         ) {
-          Text("Connect Google")
+          Text("Save & Apply")
         }
       },
       dismissButton = {
-        TextButton(onClick = { showGoogleDialog = false }) {
+        TextButton(onClick = { showApiKeyDialog = false }) {
           Text("Cancel")
         }
       }

@@ -185,15 +185,22 @@ fun CallsScreen(
           modifier = Modifier.fillMaxSize()
         ) {
           items(callLogs, key = { it.id }) { call ->
+            val contact = allContacts.find { it.phoneNumber == call.phoneNumber }
+            val recipientHasApp = contact?.hasApp ?: false
             CallHistoryItem(
               call = call,
               onCallAgain = {
-                viewModel.startVoiceCall(
-                  contactName = call.contactName,
-                  phoneNumber = call.phoneNumber,
-                  handle = call.handle,
-                  avatarColorHex = call.avatarColorHex
-                )
+                if (recipientHasApp) {
+                  viewModel.startVoiceCall(
+                    contactName = call.contactName,
+                    phoneNumber = call.phoneNumber,
+                    handle = call.handle,
+                    avatarColorHex = call.avatarColorHex,
+                    recipientHasApp = true
+                  )
+                } else {
+                  viewModel.dialWithDefaultCallerApp(call.phoneNumber)
+                }
               }
             )
           }
@@ -223,12 +230,17 @@ fun CallsScreen(
                   .clip(RoundedCornerShape(8.dp))
                   .clickable {
                     showContactPickerForCall = false
-                    viewModel.startVoiceCall(
-                      contactName = contact.name,
-                      phoneNumber = contact.phoneNumber,
-                      handle = contact.handle,
-                      avatarColorHex = contact.avatarColorHex
-                    )
+                    if (contact.hasApp) {
+                      viewModel.startVoiceCall(
+                        contactName = contact.name,
+                        phoneNumber = contact.phoneNumber,
+                        handle = contact.handle,
+                        avatarColorHex = contact.avatarColorHex,
+                        recipientHasApp = true
+                      )
+                    } else {
+                      viewModel.dialWithDefaultCallerApp(contact.phoneNumber)
+                    }
                   }
                   .padding(vertical = 10.dp, horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically

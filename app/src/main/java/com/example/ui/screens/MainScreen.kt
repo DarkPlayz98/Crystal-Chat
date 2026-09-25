@@ -70,7 +70,9 @@ fun MainScreen(
       onEndCall = { viewModel.endCall() },
       onToggleMute = { viewModel.toggleCallMute() },
       onToggleSpeaker = { viewModel.toggleCallSpeaker() },
-      onMinimize = { viewModel.toggleCallMinimize(true) }
+      onMinimize = { viewModel.toggleCallMinimize(true) },
+      onAnswerCall = { viewModel.answerCall() },
+      onDtmfTone = { digit -> viewModel.playDtmfTone(digit) }
     )
     return
   }

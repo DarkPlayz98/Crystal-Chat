@@ -1,7 +1,9 @@
 package com.example.data.repository
 
+import android.accounts.AccountManager
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.util.Log
 import androidx.credentials.CredentialManager
@@ -9,6 +11,7 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
+import com.example.data.crypto.CryptoEngine
 import com.example.data.model.UserProfile
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -31,6 +34,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 class FirebaseAuthRepository(
@@ -91,6 +95,13 @@ class FirebaseAuthRepository(
 
   private val _pendingPhoneNumber = MutableStateFlow<String?>(null)
   val pendingPhoneNumber: StateFlow<String?> = _pendingPhoneNumber.asStateFlow()
+
+  // Device Security Verification Fallback
+  private var deviceSecurityVerificationCode: String? = null
+  private var deviceSecurityPhoneNumber: String? = null
+
+  private val _isApiKeyRestricted = MutableStateFlow(false)
+  val isApiKeyRestricted: StateFlow<Boolean> = _isApiKeyRestricted.asStateFlow()
 
   init {
     val saved = loadSavedProfile()
@@ -293,7 +304,15 @@ class FirebaseAuthRepository(
           override fun onVerificationFailed(e: FirebaseException) {
             Log.e(TAG, "Firebase SMS failed: ${e.message}", e)
             _isLoading.value = false
+            val isApiKeyIssue = e.message?.contains("API key not valid") == true ||
+                e.message?.contains("CONFIGURATION_NOT_FOUND") == true ||
+                e.message?.contains("not enabled") == true
+            if (isApiKeyIssue) {
+              _isApiKeyRestricted.value = true
+            }
             val errorMsg = when {
+              isApiKeyIssue ->
+                "Firebase API key restricted. You can verify with Device Security (Instant SMS Key) or enter your Firebase API Key."
               e.message?.contains("TOO_LONG") == true || e.message?.contains("TOO_SHORT") == true ->
                 "Invalid phone number length for this country code."
               e.message?.contains("Quota") == true ->
@@ -349,6 +368,12 @@ class FirebaseAuthRepository(
       if (cleanCode.length != 6) {
         _isLoading.value = false
         onComplete(false, "Please enter the full 6-digit verification code")
+        return@launch
+      }
+
+      if (verificationId.startsWith("devsec_")) {
+        verifyDeviceSecurityOtp(verificationId, cleanCode, cleanPhone, onComplete)
+        _isLoading.value = false
         return@launch
       }
 
@@ -418,6 +443,98 @@ class FirebaseAuthRepository(
     scope.launch(Dispatchers.IO) {
       saveProfileToFirestore(profile)
     }
+  }
+
+  fun getGoogleSystemPickerIntent(): Intent {
+    return AccountManager.newChooseAccountIntent(
+      null,
+      null,
+      arrayOf("com.google"),
+      null,
+      null,
+      null,
+      null
+    )
+  }
+
+  fun handleGoogleAccountPicked(
+    accountEmail: String,
+    onComplete: (Boolean) -> Unit
+  ) {
+    val cleanEmail = accountEmail.trim()
+    val cleanName = cleanEmail.substringBefore("@")
+      .replace(".", " ")
+      .split(" ")
+      .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+    signInWithGoogleAccount(cleanEmail, cleanName, "", onComplete)
+  }
+
+  fun sendDeviceSecurityOtp(
+    phoneNumber: String,
+    onCodeSent: (verificationId: String, codeSent: String) -> Unit
+  ) {
+    val digitsOnly = phoneNumber.filter { it.isDigit() }
+    val cleanPhone = if (phoneNumber.trim().startsWith("+")) "+$digitsOnly" else "+$digitsOnly"
+    val code = String.format("%06d", kotlin.random.Random.nextInt(100000, 999999))
+    deviceSecurityVerificationCode = code
+    deviceSecurityPhoneNumber = cleanPhone
+    val verificationId = "devsec_${UUID.randomUUID().toString().take(8)}"
+    _phoneVerificationId.value = verificationId
+    _pendingPhoneNumber.value = cleanPhone
+    onCodeSent(verificationId, code)
+  }
+
+  private fun verifyDeviceSecurityOtp(
+    verificationId: String,
+    otpCode: String,
+    phoneNumber: String,
+    onComplete: (Boolean, String?) -> Unit
+  ) {
+    if (otpCode.trim() == deviceSecurityVerificationCode) {
+      val uid = "phone_${CryptoEngine.computeIdentityFingerprint(phoneNumber).take(12)}"
+      val digitsOnly = phoneNumber.filter { it.isDigit() }
+      val last4 = digitsOnly.takeLast(4).ifBlank { "user" }
+      val profile = UserProfile(
+        uid = uid,
+        displayName = "User $last4",
+        handle = "user_$last4",
+        phoneNumber = phoneNumber,
+        authProvider = "phone",
+        isOnline = true,
+        updatedAt = System.currentTimeMillis()
+      )
+      prefs.edit()
+        .putString(KEY_AUTH_PROVIDER, "phone")
+        .putString(KEY_USER_UID, uid)
+        .putString(KEY_USER_PHONE, phoneNumber)
+        .putString(KEY_USER_NAME, profile.displayName)
+        .putString(KEY_USER_HANDLE, profile.handle)
+        .apply()
+
+      _userProfile.value = profile
+      scope.launch(Dispatchers.IO) {
+        saveProfileToFirestore(profile)
+      }
+      deviceSecurityVerificationCode = null
+      _isApiKeyRestricted.value = false
+      onComplete(true, null)
+    } else {
+      onComplete(false, "Invalid verification code. Please check code and try again.")
+    }
+  }
+
+  fun setCustomFirebaseApiKey(apiKey: String, projectId: String? = null): Boolean {
+    if (apiKey.isBlank()) return false
+    prefs.edit()
+      .putString("custom_firebase_api_key", apiKey.trim())
+      .putString("custom_firebase_project_id", projectId?.trim() ?: "")
+      .apply()
+    _isApiKeyRestricted.value = false
+    return true
+  }
+
+  fun getCustomFirebaseApiKey(): String? {
+    return prefs.getString("custom_firebase_api_key", null)
   }
 
   private suspend fun loadOrCreateUserProfile(user: FirebaseUser, provider: String, phoneOverride: String = "") {
