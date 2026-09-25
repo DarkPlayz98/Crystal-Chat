@@ -1,9 +1,12 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.database.Cursor
 import android.net.Uri
 import android.provider.ContactsContract
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -35,6 +38,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sms
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -87,6 +91,24 @@ fun ContactsScreen(
   var showAddDialog by remember { mutableStateOf(false) }
   var initialPhoneForDialog by remember { mutableStateOf("") }
   var initialNameForDialog by remember { mutableStateOf("") }
+
+  val isSyncingContacts by viewModel.isSyncingContacts.collectAsStateWithLifecycle()
+
+  val syncPermissionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission()
+  ) { isGranted ->
+    if (isGranted) {
+      viewModel.syncContacts { res ->
+        Toast.makeText(
+          context,
+          "Synced ${res.totalFound} device contacts (${res.registeredAppUsers} on Crystal Chat)",
+          Toast.LENGTH_LONG
+        ).show()
+      }
+    } else {
+      Toast.makeText(context, "Contacts permission required to sync", Toast.LENGTH_SHORT).show()
+    }
+  }
 
   // Contact Picker Launcher (zero-permission standard Android contact picker)
   val pickContactLauncher = rememberLauncherForActivityResult(
@@ -168,6 +190,34 @@ fun ContactsScreen(
           containerColor = MaterialTheme.colorScheme.surface
         ),
         actions = {
+          IconButton(
+            onClick = {
+              val hasPermission = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_CONTACTS
+              ) == PackageManager.PERMISSION_GRANTED
+              if (hasPermission) {
+                viewModel.syncContacts { res ->
+                  Toast.makeText(
+                    context,
+                    "Synced ${res.totalFound} contacts (${res.registeredAppUsers} on Crystal Chat)",
+                    Toast.LENGTH_LONG
+                  ).show()
+                }
+              } else {
+                syncPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+              }
+            },
+            enabled = !isSyncingContacts,
+            modifier = Modifier.testTag("sync_contacts_topbar_button")
+          ) {
+            Icon(
+              imageVector = Icons.Default.Sync,
+              contentDescription = "Sync all contacts from phone",
+              tint = MaterialTheme.colorScheme.primary
+            )
+          }
+
           IconButton(
             onClick = { pickContactLauncher.launch(null) },
             modifier = Modifier.testTag("import_contacts_button")

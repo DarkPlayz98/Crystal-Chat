@@ -12,6 +12,7 @@ import com.example.data.local.model.MessageEntity
 import com.example.data.model.UserProfile
 import com.example.data.repository.ChatRepository
 import com.example.data.repository.FirebaseAuthRepository
+import com.example.util.ContactsSyncResult
 import com.example.util.ImageStorageHelper
 import com.example.util.NotificationPrivacyMode
 import com.example.util.SmsHelper
@@ -28,8 +29,8 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
-  val repository = ChatRepository(application, viewModelScope)
   val authRepository = FirebaseAuthRepository(application, viewModelScope)
+  val repository = ChatRepository(application, viewModelScope, authRepository)
 
   val isOnline: StateFlow<Boolean> = repository.isOnline
 
@@ -38,6 +39,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
   val userProfile: StateFlow<UserProfile?> = authRepository.userProfile
   val authLoading: StateFlow<Boolean> = authRepository.isLoading
   val authError: StateFlow<String?> = authRepository.authError
+
+  // Phone OTP States
+  val phoneVerificationId: StateFlow<String?> = authRepository.phoneVerificationId
+  val pendingPhoneNumber: StateFlow<String?> = authRepository.pendingPhoneNumber
+  val testOtpCode: StateFlow<String?> = authRepository.testOtpCode
+
+  // Contact Syncing State
+  private val _isSyncingContacts = MutableStateFlow(false)
+  val isSyncingContacts: StateFlow<Boolean> = _isSyncingContacts.asStateFlow()
+
+  private val _lastSyncResult = MutableStateFlow<ContactsSyncResult?>(null)
+  val lastSyncResult: StateFlow<ContactsSyncResult?> = _lastSyncResult.asStateFlow()
 
   // Conversations
   val allConversations: StateFlow<List<ConversationEntity>> = repository.allConversations
@@ -107,10 +120,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     repository.sendMessage(convId, text.trim(), mediaType, mediaUri, mediaMeta)
   }
 
-  /**
-   * Fix for image sending: receives the real Uri selected from PhotoPicker,
-   * copies image to local private storage, and sends the real image file.
-   */
   fun sendRealImage(uri: Uri, caption: String = "") {
     val convId = _selectedConversationId.value ?: return
     viewModelScope.launch {
@@ -130,16 +139,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
-  /**
-   * Directly routes to default messaging app for a given phone and text.
-   */
   fun openInDefaultMessagingApp(phoneNumber: String, text: String) {
     SmsHelper.openDefaultMessagingApp(getApplication(), phoneNumber, text)
   }
 
-  /**
-   * Adds a phone number based contact and checks whether they are on Firebase.
-   */
   fun addContact(
     name: String,
     phoneNumber: String,
@@ -166,13 +169,67 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
-  // Firebase Auth & Handle Actions
-  fun loadPreviewTestAccount() {
-    authRepository.loadPreviewTestAccount()
+  // Google Sign-In with Fallback Dialog
+  fun signInWithGoogle(
+    activity: Activity,
+    onFallbackNeeded: () -> Unit = {},
+    onComplete: (Boolean) -> Unit = {}
+  ) {
+    authRepository.signInWithGoogle(activity, onFallbackNeeded) { success ->
+      if (success) {
+        syncContacts()
+      }
+      onComplete(success)
+    }
   }
 
-  fun signInWithGoogle(activity: Activity, onComplete: (Boolean) -> Unit = {}) {
-    authRepository.signInWithGoogle(activity, onComplete)
+  fun signInWithGoogleAccount(
+    email: String,
+    displayName: String,
+    photoUrl: String = "",
+    onComplete: (Boolean) -> Unit = {}
+  ) {
+    authRepository.signInWithGoogleAccount(email, displayName, photoUrl) { success ->
+      if (success) {
+        syncContacts()
+      }
+      onComplete(success)
+    }
+  }
+
+  // Phone Number OTP Sign-In
+  fun sendPhoneOtp(
+    activity: Activity,
+    phoneNumber: String,
+    onCodeSent: (verificationId: String, testCode: String?) -> Unit,
+    onError: (String) -> Unit
+  ) {
+    authRepository.sendPhoneOtp(activity, phoneNumber, onCodeSent, onError)
+  }
+
+  fun verifyPhoneOtp(
+    verificationId: String,
+    otpCode: String,
+    phoneNumber: String,
+    onComplete: (Boolean, String?) -> Unit
+  ) {
+    authRepository.verifyPhoneOtp(verificationId, otpCode, phoneNumber) { success, err ->
+      if (success) {
+        syncContacts()
+      }
+      onComplete(success, err)
+    }
+  }
+
+  // Sync Contacts from Device
+  fun syncContacts(onResult: (ContactsSyncResult) -> Unit = {}) {
+    viewModelScope.launch {
+      _isSyncingContacts.value = true
+      val res = repository.syncContactsFromDevice()
+      _lastSyncResult.value = res
+      _isSyncingContacts.value = false
+      onResult(res)
+    }
   }
 
   fun updateHandleAndProfile(

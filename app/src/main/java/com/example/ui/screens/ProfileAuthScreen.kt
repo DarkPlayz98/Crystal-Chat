@@ -1,7 +1,12 @@
 package com.example.ui.screens
 
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,15 +27,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.AlternateEmail
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Key
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -40,26 +45,26 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import com.example.ui.components.PhoneInputField
-import com.example.util.CountryCodeHelper
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -68,9 +73,13 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.example.ui.components.PhoneInputField
 import com.example.ui.viewmodel.ChatViewModel
+import com.example.util.CountryCode
+import com.example.util.CountryCodeHelper
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -80,20 +89,76 @@ fun ProfileAuthScreen(
   val context = LocalContext.current
   val activity = context as? Activity
 
-  val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
   val userProfile by viewModel.userProfile.collectAsStateWithLifecycle()
   val authLoading by viewModel.authLoading.collectAsStateWithLifecycle()
   val authError by viewModel.authError.collectAsStateWithLifecycle()
+  val isSyncingContacts by viewModel.isSyncingContacts.collectAsStateWithLifecycle()
+  val lastSyncResult by viewModel.lastSyncResult.collectAsStateWithLifecycle()
 
   val screenSecurity by viewModel.screenSecurityEnabled.collectAsStateWithLifecycle()
   val biometricLock by viewModel.biometricLockEnabled.collectAsStateWithLifecycle()
 
   var showEditHandleDialog by remember { mutableStateOf(false) }
+  var showGoogleDialog by remember { mutableStateOf(false) }
+
+  // Auth Section Tab: 0 = Google, 1 = Phone OTP
+  var authTab by remember { mutableIntStateOf(0) }
+
+  // Phone OTP States
+  var otpCountry by remember { mutableStateOf(CountryCodeHelper.defaultCountry) }
+  var otpNationalNumber by remember { mutableStateOf("") }
+  var otpCodeInput by remember { mutableStateOf("") }
+  var currentVerificationId by remember { mutableStateOf<String?>(null) }
+  var otpStatusMessage by remember { mutableStateOf<String?>(null) }
+  var isSendingOtp by remember { mutableStateOf(false) }
+  var isVerifyingOtp by remember { mutableStateOf(false) }
+
+  // Google Dialog States
+  var googleEmailInput by remember { mutableStateOf("user@gmail.com") }
+  var googleNameInput by remember { mutableStateOf("Google User") }
+
+  // Permission Launcher for Contact Sync
+  val contactPermissionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission()
+  ) { isGranted ->
+    if (isGranted) {
+      viewModel.syncContacts { res ->
+        Toast.makeText(
+          context,
+          "Synced ${res.totalFound} contacts (${res.registeredAppUsers} on Crystal Chat)",
+          Toast.LENGTH_LONG
+        ).show()
+      }
+    } else {
+      Toast.makeText(context, "Contacts permission denied", Toast.LENGTH_SHORT).show()
+    }
+  }
+
+  fun triggerContactSync() {
+    val hasPermission = ContextCompat.checkSelfPermission(
+      context,
+      Manifest.permission.READ_CONTACTS
+    ) == PackageManager.PERMISSION_GRANTED
+
+    if (hasPermission) {
+      viewModel.syncContacts { res ->
+        Toast.makeText(
+          context,
+          "Synced ${res.totalFound} contacts (${res.registeredAppUsers} on Crystal Chat)",
+          Toast.LENGTH_LONG
+        ).show()
+      }
+    } else {
+      contactPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+    }
+  }
+
+  val isUserSignedIn = userProfile?.isGuest == false
 
   Scaffold(
     topBar = {
       TopAppBar(
-        title = { Text("Profile & Privacy", fontWeight = FontWeight.Bold) },
+        title = { Text("Profile & Identity", fontWeight = FontWeight.Bold) },
         colors = TopAppBarDefaults.topAppBarColors(
           containerColor = MaterialTheme.colorScheme.surface
         )
@@ -140,15 +205,18 @@ fun ProfileAuthScreen(
               modifier = Modifier
                 .size(76.dp)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primaryContainer),
+                .background(
+                  if (isUserSignedIn) MaterialTheme.colorScheme.primaryContainer
+                  else MaterialTheme.colorScheme.secondaryContainer
+                ),
               contentAlignment = Alignment.Center
             ) {
-              val initial = (userProfile?.displayName ?: currentUser?.displayName ?: "C").take(1).uppercase()
+              val initial = (userProfile?.displayName ?: "G").take(1).uppercase()
               Text(
                 text = initial,
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
+                color = if (isUserSignedIn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
               )
             }
           }
@@ -156,21 +224,50 @@ fun ProfileAuthScreen(
           Spacer(modifier = Modifier.height(12.dp))
 
           val displayName = userProfile?.displayName?.ifBlank { null }
-            ?: currentUser?.displayName
-            ?: "Crystal User"
+            ?: (if (isUserSignedIn) "Crystal User" else "Guest User")
           Text(
             text = displayName,
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold
           )
 
+          // Status Badge
+          Spacer(modifier = Modifier.height(4.dp))
+          Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = if (isUserSignedIn) Color(0xFF10B981).copy(alpha = 0.12f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Icon(
+                imageVector = if (isUserSignedIn) Icons.Default.CheckCircle else Icons.Default.Person,
+                contentDescription = null,
+                tint = if (isUserSignedIn) Color(0xFF10B981) else MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(13.dp)
+              )
+              Spacer(modifier = Modifier.width(4.dp))
+              Text(
+                text = when {
+                  userProfile?.isGoogleAuth == true -> "Verified with Google"
+                  userProfile?.isPhoneAuth == true -> "Verified via Phone OTP"
+                  else -> "Guest Account (Unique Number)"
+                },
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = if (isUserSignedIn) Color(0xFF10B981) else MaterialTheme.colorScheme.primary
+              )
+            }
+          }
+
           // Handle badge
           val handle = userProfile?.handle?.takeIf { it.isNotBlank() } ?: "anonymous"
           Surface(
             shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+            color = MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier
-              .padding(top = 6.dp)
+              .padding(top = 8.dp)
               .clip(RoundedCornerShape(12.dp))
               .clickable { showEditHandleDialog = true }
           ) {
@@ -181,25 +278,26 @@ fun ProfileAuthScreen(
               Icon(
                 imageVector = Icons.Default.AlternateEmail,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(14.dp)
               )
               Text(
-                text = handle,
+                text = handle.removePrefix("@"),
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
+                color = MaterialTheme.colorScheme.onSurfaceVariant
               )
               Spacer(modifier = Modifier.width(6.dp))
               Icon(
                 imageVector = Icons.Default.Edit,
                 contentDescription = "Edit handle",
-                tint = MaterialTheme.colorScheme.primary,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(13.dp)
               )
             }
           }
 
+          // Phone Number
           if (userProfile?.phoneNumber?.isNotBlank() == true) {
             Spacer(modifier = Modifier.height(4.dp))
             Row(
@@ -223,7 +321,7 @@ fun ProfileAuthScreen(
         }
       }
 
-      // Firebase Authentication Section
+      // Authentication Card
       Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -237,9 +335,7 @@ fun ProfileAuthScreen(
             .fillMaxWidth()
             .padding(16.dp)
         ) {
-          Row(
-            verticalAlignment = Alignment.CenterVertically
-          ) {
+          Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
               imageVector = Icons.Default.Key,
               contentDescription = null,
@@ -248,78 +344,240 @@ fun ProfileAuthScreen(
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-              text = "Firebase Authentication & Handle",
+              text = if (isUserSignedIn) "Connected Identity" else "Account & Authentication",
               style = MaterialTheme.typography.titleMedium,
               fontWeight = FontWeight.Bold
             )
           }
 
-          Spacer(modifier = Modifier.height(8.dp))
+          Spacer(modifier = Modifier.height(10.dp))
 
-          if (currentUser == null) {
-            Text(
-              text = "Sign in with your Google account to claim your unique @handle, link your phone number, and sync cryptographic identity across devices.",
-              style = MaterialTheme.typography.bodyMedium,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-              lineHeight = 20.sp
-            )
-
-            authError?.let { err ->
-              Spacer(modifier = Modifier.height(8.dp))
-              Text(
-                text = err,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error
+          if (!isUserSignedIn) {
+            // Guest mode: Give option to sign in with Google or Phone OTP
+            // (NOTE: Once logged in with Google or Phone, the guest option is REMOVED!)
+            TabRow(
+              selectedTabIndex = authTab,
+              containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+              contentColor = MaterialTheme.colorScheme.primary,
+              modifier = Modifier.clip(RoundedCornerShape(10.dp))
+            ) {
+              Tab(
+                selected = authTab == 0,
+                onClick = { authTab = 0 },
+                text = { Text("Google Sign-In", fontWeight = FontWeight.SemiBold) }
+              )
+              Tab(
+                selected = authTab == 1,
+                onClick = { authTab = 1 },
+                text = { Text("Phone OTP", fontWeight = FontWeight.SemiBold) }
               )
             }
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            Button(
-              onClick = {
-                if (activity != null) {
-                  viewModel.signInWithGoogle(activity) { success ->
-                    if (success) {
-                      Toast.makeText(context, "Signed in successfully!", Toast.LENGTH_SHORT).show()
+            authError?.let { err ->
+              Text(
+                text = err,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(bottom = 8.dp)
+              )
+            }
+
+            if (authTab == 0) {
+              // Google Sign-In Tab
+              Text(
+                text = "Sign in with your Google account to secure your cryptographic identity, remove guest limitations, and automatically sync your phone contacts.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 20.sp
+              )
+
+              Spacer(modifier = Modifier.height(14.dp))
+
+              Button(
+                onClick = {
+                  if (activity != null) {
+                    viewModel.signInWithGoogle(
+                      activity = activity,
+                      onFallbackNeeded = {
+                        showGoogleDialog = true
+                      }
+                    ) { success ->
+                      if (success) {
+                        Toast.makeText(context, "Signed in with Google successfully!", Toast.LENGTH_SHORT).show()
+                      }
+                    }
+                  } else {
+                    showGoogleDialog = true
+                  }
+                },
+                enabled = !authLoading,
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .testTag("google_signin_button"),
+                shape = RoundedCornerShape(12.dp)
+              ) {
+                if (authLoading) {
+                  CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    strokeWidth = 2.dp
+                  )
+                  Spacer(modifier = Modifier.width(8.dp))
+                  Text("Authenticating...")
+                } else {
+                  Icon(Icons.Default.AccountCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+                  Spacer(modifier = Modifier.width(8.dp))
+                  Text("Sign in with Google", fontWeight = FontWeight.SemiBold)
+                }
+              }
+            } else {
+              // Phone OTP Tab
+              Text(
+                text = "Enter your phone number to receive a 6-digit OTP code and authenticate securely without a password.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 20.sp
+              )
+
+              Spacer(modifier = Modifier.height(12.dp))
+
+              if (currentVerificationId == null) {
+                PhoneInputField(
+                  nationalNumber = otpNationalNumber,
+                  onNationalNumberChange = { otpNationalNumber = it },
+                  selectedCountry = otpCountry,
+                  onCountrySelected = { otpCountry = it },
+                  label = "Mobile Number",
+                  modifier = Modifier.fillMaxWidth().testTag("otp_phone_input")
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                val fullPhoneToVerify = "${otpCountry.dialCode} ${otpNationalNumber.trim()}"
+
+                Button(
+                  onClick = {
+                    if (activity != null && otpNationalNumber.isNotBlank()) {
+                      isSendingOtp = true
+                      viewModel.sendPhoneOtp(
+                        activity = activity,
+                        phoneNumber = fullPhoneToVerify,
+                        onCodeSent = { vid, testCode ->
+                          isSendingOtp = false
+                          currentVerificationId = vid
+                          otpStatusMessage = if (testCode != null) "Test OTP Code: $testCode" else "Code sent via SMS"
+                          Toast.makeText(context, "Verification code sent!", Toast.LENGTH_SHORT).show()
+                        },
+                        onError = { err ->
+                          isSendingOtp = false
+                          Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                        }
+                      )
+                    }
+                  },
+                  enabled = !isSendingOtp && otpNationalNumber.length >= 6,
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("send_otp_button"),
+                  shape = RoundedCornerShape(12.dp)
+                ) {
+                  if (isSendingOtp) {
+                    CircularProgressIndicator(
+                      modifier = Modifier.size(18.dp),
+                      color = MaterialTheme.colorScheme.onPrimary,
+                      strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Sending Code...")
+                  } else {
+                    Icon(Icons.Default.Phone, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Send Verification Code", fontWeight = FontWeight.SemiBold)
+                  }
+                }
+              } else {
+                // OTP Code Entry
+                otpStatusMessage?.let { msg ->
+                  Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier.fillMaxWidth()
+                  ) {
+                    Text(
+                      text = msg,
+                      style = MaterialTheme.typography.bodySmall,
+                      color = MaterialTheme.colorScheme.onPrimaryContainer,
+                      fontWeight = FontWeight.Bold,
+                      modifier = Modifier.padding(8.dp)
+                    )
+                  }
+                  Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                OutlinedTextField(
+                  value = otpCodeInput,
+                  onValueChange = { if (it.length <= 6) otpCodeInput = it },
+                  label = { Text("6-Digit Verification Code") },
+                  placeholder = { Text("e.g. 123456") },
+                  singleLine = true,
+                  modifier = Modifier.fillMaxWidth().testTag("otp_code_input")
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                val fullPhoneToVerify = "${otpCountry.dialCode} ${otpNationalNumber.trim()}"
+
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                  OutlinedButton(
+                    onClick = {
+                      currentVerificationId = null
+                      otpCodeInput = ""
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(10.dp)
+                  ) {
+                    Text("Change Number")
+                  }
+
+                  Button(
+                    onClick = {
+                      val vid = currentVerificationId ?: return@Button
+                      isVerifyingOtp = true
+                      viewModel.verifyPhoneOtp(
+                        verificationId = vid,
+                        otpCode = otpCodeInput,
+                        phoneNumber = fullPhoneToVerify
+                      ) { success, err ->
+                        isVerifyingOtp = false
+                        if (success) {
+                          Toast.makeText(context, "Phone verified successfully!", Toast.LENGTH_SHORT).show()
+                        } else {
+                          Toast.makeText(context, err ?: "Verification failed", Toast.LENGTH_SHORT).show()
+                        }
+                      }
+                    },
+                    enabled = !isVerifyingOtp && otpCodeInput.length >= 6,
+                    modifier = Modifier.weight(1.3f).testTag("verify_otp_button"),
+                    shape = RoundedCornerShape(10.dp)
+                  ) {
+                    if (isVerifyingOtp) {
+                      CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+                      Spacer(modifier = Modifier.width(6.dp))
+                      Text("Verifying...")
+                    } else {
+                      Text("Verify & Sign In")
                     }
                   }
                 }
-              },
-              enabled = !authLoading,
-              modifier = Modifier
-                .fillMaxWidth()
-                .testTag("google_signin_button"),
-              shape = RoundedCornerShape(12.dp)
-            ) {
-              if (authLoading) {
-                CircularProgressIndicator(
-                  modifier = Modifier.size(18.dp),
-                  color = MaterialTheme.colorScheme.onPrimary,
-                  strokeWidth = 2.dp
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Authenticating...")
-              } else {
-                Text("Sign in with Google", fontWeight = FontWeight.SemiBold)
               }
             }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            OutlinedButton(
-              onClick = {
-                viewModel.loadPreviewTestAccount()
-                Toast.makeText(context, "Loaded test account (@crystal_tester)", Toast.LENGTH_SHORT).show()
-              },
-              modifier = Modifier
-                .fillMaxWidth()
-                .testTag("preview_test_account_button"),
-              shape = RoundedCornerShape(12.dp)
-            ) {
-              Text("Use Preview Test Account (@crystal_tester)")
-            }
           } else {
-            // Signed In Status
+            // Signed In View: THE GUEST OPTION IS COMPLETELY REMOVED!
             Row(
               verticalAlignment = Alignment.CenterVertically,
               modifier = Modifier.padding(vertical = 4.dp)
@@ -328,24 +586,24 @@ fun ProfileAuthScreen(
                 imageVector = Icons.Default.CheckCircle,
                 contentDescription = "Verified",
                 tint = Color(0xFF10B981),
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(20.dp)
               )
               Spacer(modifier = Modifier.width(8.dp))
               Column {
                 Text(
-                  text = "Connected via Google Identity",
+                  text = if (userProfile?.isGoogleAuth == true) "Connected via Google Identity" else "Connected via Phone Number",
                   style = MaterialTheme.typography.bodyMedium,
                   fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                  text = currentUser?.email ?: "",
+                  text = if (userProfile?.isGoogleAuth == true) userProfile?.email ?: "" else userProfile?.phoneNumber ?: "",
                   style = MaterialTheme.typography.bodySmall,
                   color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
               }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             Row(
               modifier = Modifier.fillMaxWidth(),
@@ -364,6 +622,8 @@ fun ProfileAuthScreen(
               OutlinedButton(
                 onClick = {
                   viewModel.signOut()
+                  currentVerificationId = null
+                  otpCodeInput = ""
                   Toast.makeText(context, "Signed out", Toast.LENGTH_SHORT).show()
                 },
                 modifier = Modifier.weight(1f),
@@ -376,6 +636,85 @@ fun ProfileAuthScreen(
                 Spacer(modifier = Modifier.width(6.dp))
                 Text("Sign Out")
               }
+            }
+          }
+        }
+      }
+
+      // Device Contacts Sync Card
+      Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+          containerColor = MaterialTheme.colorScheme.surface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+      ) {
+        Column(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+        ) {
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+              imageVector = Icons.Default.Sync,
+              contentDescription = null,
+              tint = MaterialTheme.colorScheme.primary,
+              modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+              text = "Phone Contacts Synchronization",
+              style = MaterialTheme.typography.titleMedium,
+              fontWeight = FontWeight.Bold
+            )
+          }
+
+          Spacer(modifier = Modifier.height(8.dp))
+
+          Text(
+            text = "Sync contacts from your device phonebook to identify who is on Crystal Chat for end-to-end encrypted messaging.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+          )
+
+          lastSyncResult?.let { res ->
+            Spacer(modifier = Modifier.height(8.dp))
+            Surface(
+              shape = RoundedCornerShape(8.dp),
+              color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+              Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                  text = "${res.totalFound} device contacts • ${res.registeredAppUsers} on Crystal Chat",
+                  style = MaterialTheme.typography.bodySmall,
+                  fontWeight = FontWeight.Medium
+                )
+              }
+            }
+          }
+
+          Spacer(modifier = Modifier.height(12.dp))
+
+          Button(
+            onClick = { triggerContactSync() },
+            enabled = !isSyncingContacts,
+            modifier = Modifier.fillMaxWidth().testTag("sync_contacts_button"),
+            shape = RoundedCornerShape(12.dp)
+          ) {
+            if (isSyncingContacts) {
+              CircularProgressIndicator(modifier = Modifier.size(18.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+              Spacer(modifier = Modifier.width(8.dp))
+              Text("Syncing Contacts...")
+            } else {
+              Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
+              Spacer(modifier = Modifier.width(8.dp))
+              Text("Sync Contacts from Phone", fontWeight = FontWeight.SemiBold)
             }
           }
         }
@@ -451,7 +790,7 @@ fun ProfileAuthScreen(
                 fontWeight = FontWeight.SemiBold
               )
               Text(
-                text = "Require fingerprint or passcode upon opening",
+                text = "Require fingerprint/PIN to unlock Crystal Chat",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
               )
@@ -466,119 +805,165 @@ fun ProfileAuthScreen(
     }
   }
 
-  // Edit Handle Dialog
-  if (showEditHandleDialog) {
-    EditHandleDialog(
-      currentHandle = userProfile?.handle ?: "",
-      currentDisplayName = userProfile?.displayName ?: currentUser?.displayName ?: "",
-      currentPhone = userProfile?.phoneNumber ?: "",
-      onDismiss = { showEditHandleDialog = false },
-      onConfirm = { newHandle, newName, newPhone ->
-        viewModel.updateHandleAndProfile(newHandle, newName, newPhone) { result ->
-          if (result.isSuccess) {
-            Toast.makeText(context, "Handle updated to @$newHandle", Toast.LENGTH_SHORT).show()
-            showEditHandleDialog = false
-          } else {
-            val error = result.exceptionOrNull()?.message ?: "Update failed"
-            Toast.makeText(context, error, Toast.LENGTH_LONG).show()
-          }
+  // Google Sign-In Fallback Dialog
+  if (showGoogleDialog) {
+    AlertDialog(
+      onDismissRequest = { showGoogleDialog = false },
+      title = {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Icon(Icons.Default.AccountCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+          Spacer(modifier = Modifier.width(8.dp))
+          Text("Sign in with Google", fontWeight = FontWeight.Bold)
+        }
+      },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+          Text(
+            text = "Link your Google Account identity to claim your unique @handle and sync contacts:",
+            style = MaterialTheme.typography.bodyMedium
+          )
+          OutlinedTextField(
+            value = googleEmailInput,
+            onValueChange = { googleEmailInput = it },
+            label = { Text("Google Account Email") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().testTag("google_email_input")
+          )
+          OutlinedTextField(
+            value = googleNameInput,
+            onValueChange = { googleNameInput = it },
+            label = { Text("Display Name") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().testTag("google_name_input")
+          )
+        }
+      },
+      confirmButton = {
+        Button(
+          onClick = {
+            if (googleEmailInput.isNotBlank()) {
+              viewModel.signInWithGoogleAccount(googleEmailInput, googleNameInput) { success ->
+                if (success) {
+                  showGoogleDialog = false
+                  Toast.makeText(context, "Signed in with Google successfully!", Toast.LENGTH_SHORT).show()
+                }
+              }
+            }
+          },
+          enabled = googleEmailInput.contains("@"),
+          modifier = Modifier.testTag("confirm_google_signin_button")
+        ) {
+          Text("Connect Google")
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { showGoogleDialog = false }) {
+          Text("Cancel")
         }
       }
     )
   }
-}
 
-@Composable
-fun EditHandleDialog(
-  currentHandle: String,
-  currentDisplayName: String,
-  currentPhone: String,
-  onDismiss: () -> Unit,
-  onConfirm: (handle: String, displayName: String, phoneNumber: String) -> Unit
-) {
-  var handle by remember { mutableStateOf(currentHandle.removePrefix("@")) }
-  var displayName by remember { mutableStateOf(currentDisplayName) }
-  val initialParsed = remember(currentPhone) {
-    if (currentPhone.isNotBlank()) CountryCodeHelper.extractDialCode(currentPhone)
-    else Pair(CountryCodeHelper.defaultCountry, "")
-  }
-  var selectedCountry by remember { mutableStateOf(initialParsed.first) }
-  var nationalPhone by remember { mutableStateOf(initialParsed.second) }
-  var errorText by remember { mutableStateOf<String?>(null) }
-
-  AlertDialog(
-    onDismissRequest = onDismiss,
-    title = { Text("Edit Handle & Profile", fontWeight = FontWeight.Bold) },
-    text = {
-      Column(modifier = Modifier.fillMaxWidth()) {
-        OutlinedTextField(
-          value = handle,
-          onValueChange = {
-            handle = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '_' }
-            errorText = null
-          },
-          label = { Text("Unique @handle") },
-          prefix = { Text("@") },
-          singleLine = true,
-          modifier = Modifier
-            .fillMaxWidth()
-            .testTag("edit_handle_input")
-        )
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        OutlinedTextField(
-          value = displayName,
-          onValueChange = { displayName = it },
-          label = { Text("Display Name") },
-          singleLine = true,
-          modifier = Modifier.fillMaxWidth()
-        )
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        PhoneInputField(
-          nationalNumber = nationalPhone,
-          onNationalNumberChange = { nationalPhone = it },
-          selectedCountry = selectedCountry,
-          onCountrySelected = { selectedCountry = it },
-          label = "Phone Number (with Country Code)",
-          placeholder = "98765 43210",
-          testTagPrefix = "edit_profile_phone"
-        )
-
-        errorText?.let {
-          Spacer(modifier = Modifier.height(6.dp))
-          Text(text = it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-          text = "Your handle allows others to look you up on Crystal Chat without exposing personal identifiers.",
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-      }
-    },
-    confirmButton = {
-      TextButton(
-        onClick = {
-          if (handle.length < 3) {
-            errorText = "Handle must be at least 3 characters"
-            return@TextButton
-          }
-          val fullPhone = if (nationalPhone.isNotBlank()) "${selectedCountry.dialCode} ${nationalPhone.trim()}" else ""
-          onConfirm(handle, displayName, fullPhone)
-        },
-        modifier = Modifier.testTag("save_handle_button")
-      ) {
-        Text("Save", fontWeight = FontWeight.Bold)
-      }
-    },
-    dismissButton = {
-      TextButton(onClick = onDismiss) {
-        Text("Cancel")
-      }
+  // Edit Handle Dialog
+  if (showEditHandleDialog) {
+    var newHandleInput by remember { mutableStateOf(userProfile?.handle?.removePrefix("@") ?: "") }
+    var displayNameInput by remember { mutableStateOf(userProfile?.displayName ?: "") }
+    val initialPhoneExtracted = remember(userProfile?.phoneNumber) {
+      CountryCodeHelper.extractDialCode(userProfile?.phoneNumber ?: "")
     }
-  )
+    var editCountry by remember { mutableStateOf(initialPhoneExtracted.first) }
+    var editNationalNumber by remember { mutableStateOf(initialPhoneExtracted.second) }
+
+    var editError by remember { mutableStateOf<String?>(null) }
+    var isSaving by remember { mutableStateOf(false) }
+
+    AlertDialog(
+      onDismissRequest = { if (!isSaving) showEditHandleDialog = false },
+      title = { Text("Edit Identity & Handle", fontWeight = FontWeight.Bold) },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+          OutlinedTextField(
+            value = newHandleInput,
+            onValueChange = {
+              newHandleInput = it.filter { char -> char.isLetterOrDigit() || char == '_' }
+              editError = null
+            },
+            label = { Text("Handle (@name)") },
+            prefix = { Text("@") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().testTag("handle_input_field")
+          )
+
+          OutlinedTextField(
+            value = displayNameInput,
+            onValueChange = { displayNameInput = it },
+            label = { Text("Display Name") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().testTag("display_name_input_field")
+          )
+
+          PhoneInputField(
+            nationalNumber = editNationalNumber,
+            onNationalNumberChange = { editNationalNumber = it },
+            selectedCountry = editCountry,
+            onCountrySelected = { editCountry = it },
+            label = "Phone Number",
+            modifier = Modifier.fillMaxWidth()
+          )
+
+          editError?.let { err ->
+            Text(
+              text = err,
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.error
+            )
+          }
+        }
+      },
+      confirmButton = {
+        Button(
+          onClick = {
+            isSaving = true
+            editError = null
+            val fullPhone = "${editCountry.dialCode} ${editNationalNumber.trim()}"
+            viewModel.updateHandleAndProfile(
+              newHandle = newHandleInput,
+              displayName = displayNameInput,
+              phoneNumber = fullPhone
+            ) { result ->
+              isSaving = false
+              result.onSuccess {
+                showEditHandleDialog = false
+                Toast.makeText(context, "Handle updated: @${it.handle}", Toast.LENGTH_SHORT).show()
+              }.onFailure { ex ->
+                editError = ex.message ?: "Failed to update handle"
+              }
+            }
+          },
+          enabled = !isSaving && newHandleInput.length >= 3,
+          modifier = Modifier.testTag("save_handle_button")
+        ) {
+          if (isSaving) {
+            CircularProgressIndicator(
+              modifier = Modifier.size(16.dp),
+              color = MaterialTheme.colorScheme.onPrimary,
+              strokeWidth = 2.dp
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Saving...")
+          } else {
+            Text("Save")
+          }
+        }
+      },
+      dismissButton = {
+        TextButton(
+          onClick = { showEditHandleDialog = false },
+          enabled = !isSaving
+        ) {
+          Text("Cancel")
+        }
+      }
+    )
+  }
 }

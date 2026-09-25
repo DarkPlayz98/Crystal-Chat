@@ -2,15 +2,20 @@ package com.example.data.repository
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import com.example.data.crypto.CryptoEngine
 import com.example.data.local.CipherDatabase
 import com.example.data.local.model.ContactEntity
 import com.example.data.local.model.ConversationEntity
 import com.example.data.local.model.DeviceSessionEntity
 import com.example.data.local.model.MessageEntity
+import com.example.util.ContactsSyncHelper
+import com.example.util.ContactsSyncResult
 import com.example.util.NotificationHelper
 import com.example.util.NotificationPrivacyMode
 import com.example.util.SmsHelper
+import com.google.firebase.firestore.DocumentChange
+import com.google.firebase.firestore.ListenerRegistration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -21,13 +26,17 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
 import java.util.UUID
 
 class ChatRepository(
   private val context: Context,
-  private val scope: CoroutineScope
+  private val scope: CoroutineScope,
+  private val authRepository: FirebaseAuthRepository
 ) {
+  companion object {
+    private const val TAG = "ChatRepository"
+  }
+
   private val database = CipherDatabase.getDatabase(context, scope)
   private val conversationDao = database.conversationDao()
   private val messageDao = database.messageDao()
@@ -35,7 +44,7 @@ class ChatRepository(
   private val contactDao = database.contactDao()
   private val notificationHelper = NotificationHelper(context)
 
-  // Network Connectivity State (Simulated & Reactive)
+  // Network Connectivity State
   private val _isOnline = MutableStateFlow(true)
   val isOnline = _isOnline.asStateFlow()
 
@@ -55,11 +64,12 @@ class ChatRepository(
   val linkedDevices: Flow<List<DeviceSessionEntity>> = deviceSessionDao.getAllSessions()
   val allContacts: Flow<List<ContactEntity>> = contactDao.getAllContacts()
 
+  private var firestoreListener: ListenerRegistration? = null
+  private val appStartTime = System.currentTimeMillis() - 120000L // Listen from last 2 minutes onwards
+
   init {
-    // Seed preview test account data immediately
-    scope.launch(Dispatchers.IO) {
-      seedPreviewTestData()
-    }
+    // Start real-time Firestore message listener
+    setupFirestoreMessageListener()
 
     // Start periodic background cleaner for disappearing messages
     scope.launch(Dispatchers.IO) {
@@ -70,55 +80,126 @@ class ChatRepository(
     }
   }
 
-  suspend fun seedPreviewTestData() {
-    val testEchoId = "chat_crystal_echo_test"
-    if (conversationDao.getConversationDirect(testEchoId) == null) {
-      val testContact = ContactEntity(
-        id = "contact_crystal_echo_test",
-        name = "Crystal Echo (Test Account)",
-        phoneNumber = "+91 98765 43210",
-        handle = "@crystal_echo",
-        avatarColorHex = 0xFF0D9488,
-        hasApp = true,
-        addedAt = System.currentTimeMillis()
-      )
-      contactDao.insert(testContact)
+  /**
+   * Real-time listener for incoming messages across Firestore.
+   * Enables Guest-to-Guest and User-to-User cross-device messaging.
+   */
+  private fun setupFirestoreMessageListener() {
+    try {
+      firestoreListener?.remove()
+      firestoreListener = authRepository.firestore.collection("messages")
+        .whereGreaterThanOrEqualTo("timestamp", appStartTime)
+        .addSnapshotListener { snapshots, error ->
+          if (error != null) {
+            Log.w(TAG, "Firestore message listener error: ${error.message}")
+            return@addSnapshotListener
+          }
+          if (snapshots == null || snapshots.isEmpty) return@addSnapshotListener
 
-      val conv = ConversationEntity(
-        id = testEchoId,
-        title = "Crystal Echo (Test Account)",
-        isGroup = false,
-        participantNames = "Crystal Echo",
-        participantHandles = "@crystal_echo",
-        phoneNumber = "+91 98765 43210",
-        isExternalSms = false,
-        lastMessageText = "Welcome to Crystal Chat preview! Send me any message to test encrypted messaging.",
-        lastMessageTime = System.currentTimeMillis(),
-        unreadCount = 1,
-        isPinned = true,
-        isVerified = true,
-        safetyNumber = "84920 18492 01849 20184 92018",
-        avatarColorHex = 0xFF0D9488
-      )
-      conversationDao.insert(conv)
+          val currentProfile = authRepository.userProfile.value
+          val myUid = currentProfile?.uid ?: ""
+          val myPhone = (currentProfile?.phoneNumber ?: "").filter { it.isDigit() || it == '+' }
+          val myHandle = (currentProfile?.handle ?: "").lowercase().removePrefix("@")
 
-      val welcomeText = "Welcome to Crystal Chat! I am your preview test account. Type any message below, pick an image, or test disappearing timers. Every message is end-to-end encrypted with AES-256-GCM."
-      val welcomePayload = CryptoEngine.encrypt(welcomeText)
-      messageDao.insert(
-        MessageEntity(
-          id = "msg_welcome_test_echo",
-          conversationId = testEchoId,
-          senderId = "peer",
-          senderName = "Crystal Echo",
-          cipherTextBase64 = welcomePayload.cipherTextBase64,
-          nonceBase64 = welcomePayload.nonceBase64,
-          plainText = welcomeText,
-          timestamp = System.currentTimeMillis(),
-          status = "READ",
-          isOutgoing = false,
-          authTagHex = welcomePayload.authTagHex
-        )
-      )
+          for (change in snapshots.documentChanges) {
+            if (change.type == DocumentChange.Type.ADDED) {
+              val doc = change.document
+              val data = doc.data
+              val senderId = data["senderId"] as? String ?: ""
+              // Ignore messages sent by self
+              if (senderId == myUid) continue
+
+              val msgId = data["id"] as? String ?: doc.id
+              val recipientPhone = (data["recipientPhone"] as? String ?: "").filter { it.isDigit() || it == '+' }
+              val recipientHandle = (data["recipientHandle"] as? String ?: "").lowercase().removePrefix("@")
+              val convId = data["conversationId"] as? String ?: ""
+
+              val isDirectRecipient = (myPhone.isNotBlank() && recipientPhone.isNotBlank() && recipientPhone == myPhone) ||
+                (myHandle.isNotBlank() && recipientHandle.isNotBlank() && recipientHandle == myHandle)
+              val isConversationMatch = activeChatId.value != null && activeChatId.value == convId
+
+              if (!isDirectRecipient && !isConversationMatch) {
+                continue
+              }
+
+              scope.launch(Dispatchers.IO) {
+                if (messageDao.getMessageDirect(msgId) != null) return@launch
+
+                val senderName = data["senderName"] as? String ?: "Contact"
+                val senderPhone = data["senderPhone"] as? String ?: ""
+                val senderHandle = data["senderHandle"] as? String ?: ""
+                val cipher = data["cipherTextBase64"] as? String ?: ""
+                val nonce = data["nonceBase64"] as? String ?: ""
+                val plainText = data["plainText"] as? String ?: ""
+                val mediaType = data["mediaType"] as? String ?: "TEXT"
+                val mediaUri = data["mediaUri"] as? String
+                val mediaMeta = data["mediaMeta"] as? String
+                val time = (data["timestamp"] as? Long) ?: System.currentTimeMillis()
+                val authTag = data["authTagHex"] as? String ?: ""
+
+                // Ensure a conversation exists locally for this peer
+                var targetConvId = convId
+                var conv = conversationDao.getConversationDirect(targetConvId)
+                if (conv == null && senderPhone.isNotBlank()) {
+                  conv = conversationDao.getConversationByPhone(senderPhone)
+                  if (conv != null) targetConvId = conv.id
+                }
+                if (conv == null) {
+                  targetConvId = "chat_${UUID.randomUUID().toString().take(8)}"
+                  val newConv = ConversationEntity(
+                    id = targetConvId,
+                    title = senderName,
+                    isGroup = false,
+                    participantNames = senderName,
+                    participantHandles = senderHandle.let { if (it.startsWith("@")) it else "@$it" },
+                    phoneNumber = senderPhone,
+                    isExternalSms = false,
+                    lastMessageText = "$senderName: $plainText",
+                    lastMessageTime = time,
+                    unreadCount = 1,
+                    isPinned = false,
+                    isVerified = true,
+                    safetyNumber = CryptoEngine.generateSafetyNumber("my_pubkey", senderPhone.ifBlank { senderHandle }),
+                    avatarColorHex = 0xFF6366F1
+                  )
+                  conversationDao.insert(newConv)
+                } else {
+                  conversationDao.updateLastMessage(targetConvId, "$senderName: $plainText", time)
+                }
+
+                val incomingMsg = MessageEntity(
+                  id = msgId,
+                  conversationId = targetConvId,
+                  senderId = senderId,
+                  senderName = senderName,
+                  cipherTextBase64 = cipher,
+                  nonceBase64 = nonce,
+                  plainText = plainText,
+                  mediaType = mediaType,
+                  mediaUri = mediaUri,
+                  mediaMeta = mediaMeta,
+                  timestamp = time,
+                  status = "DELIVERED",
+                  isOutgoing = false,
+                  authTagHex = authTag,
+                  isSms = false
+                )
+                messageDao.insert(incomingMsg)
+
+                if (activeChatId.value != targetConvId) {
+                  notificationHelper.showMessageNotification(
+                    conversationId = targetConvId,
+                    senderName = senderName,
+                    plainText = plainText,
+                    privacyMode = notificationPrivacyMode.value
+                  )
+                }
+              }
+            }
+          }
+        }
+    } catch (e: Exception) {
+      Log.w(TAG, "Failed to start Firestore message listener: ${e.message}")
     }
   }
 
@@ -164,7 +245,7 @@ class ChatRepository(
 
       val isSmsDelivery = conv?.isExternalSms == true && !conv.phoneNumber.isNullOrBlank()
 
-      // Encrypt with AES-256-GCM
+      // Encrypt payload with AES-256-GCM
       val payload = CryptoEngine.encrypt(text)
 
       val isCurrentOnline = _isOnline.value
@@ -175,6 +256,12 @@ class ChatRepository(
       }
 
       val msgId = "msg_${UUID.randomUUID().toString().take(8)}"
+      val currentProfile = authRepository.userProfile.value
+      val myUid = currentProfile?.uid ?: "user_me"
+      val myName = currentProfile?.displayName ?: "Me"
+      val myPhone = currentProfile?.phoneNumber ?: ""
+      val myHandle = currentProfile?.handle ?: ""
+
       val message = MessageEntity(
         id = msgId,
         conversationId = conversationId,
@@ -201,97 +288,39 @@ class ChatRepository(
 
       if (isSmsDelivery) {
         val phone = conv.phoneNumber ?: ""
-        // Send directly in background via Android's SmsManager - sender NEVER routed to external app!
+        // Send directly in background via Android's SmsManager
         SmsHelper.sendDirectSmsInBackground(
           context = context,
           phoneNumber = phone,
           messageText = text
         )
-        simulateSmsLifecycle(msgId, conversationId, phone, text)
-      } else if (isCurrentOnline) {
-        simulateMessageLifecycle(msgId, conversationId, text, mediaType)
-      }
-    }
-  }
-
-  private fun simulateSmsLifecycle(msgId: String, conversationId: String, phone: String, userText: String) {
-    scope.launch(Dispatchers.IO) {
-      delay(300)
-      messageDao.updateStatus(msgId, "SENT_SMS")
-      // In preview, always simulate delivery confirmation / reply so testing is immediate
-      delay(1200)
-      val reply = "Simulated SMS from $phone: Received \"$userText\""
-      simulateIncomingPeerMessage(conversationId, phone, reply)
-    }
-  }
-
-  private fun simulateMessageLifecycle(
-    msgId: String,
-    conversationId: String,
-    userText: String,
-    mediaType: String = "TEXT"
-  ) {
-    scope.launch(Dispatchers.IO) {
-      delay(300)
-      messageDao.updateStatus(msgId, "DELIVERED")
-      delay(600)
-      messageDao.updateStatus(msgId, "READ")
-
-      val conv = conversationDao.getConversationDirect(conversationId) ?: return@launch
-      delay(1000)
-      val replyText = when {
-        mediaType == "IMAGE" ->
-          "Received your photo! Decrypted in volatile memory [AES-256-GCM]."
-        conv.id == "chat_crystal_echo_test" || conv.participantHandles.contains("echo") ->
-          "Echo [AES-256-GCM Decrypted]: \"$userText\""
-        conv.isGroup ->
-          "Peer in ${conv.title}: \"$userText\" (Sender key verified)"
-        else ->
-          "Received: \"$userText\" [Encrypted payload validated]"
-      }
-
-      simulateIncomingPeerMessage(
-        conversationId = conversationId,
-        senderName = conv.title.substringBefore(" ("),
-        plainText = replyText
-      )
-    }
-  }
-
-  fun simulateIncomingPeerMessage(
-    conversationId: String,
-    senderName: String,
-    plainText: String
-  ) {
-    scope.launch(Dispatchers.IO) {
-      val now = System.currentTimeMillis()
-      val payload = CryptoEngine.encrypt(plainText)
-      val replyId = "msg_peer_${UUID.randomUUID().toString().take(8)}"
-      val replyMsg = MessageEntity(
-        id = replyId,
-        conversationId = conversationId,
-        senderId = "peer",
-        senderName = senderName,
-        cipherTextBase64 = payload.cipherTextBase64,
-        nonceBase64 = payload.nonceBase64,
-        plainText = plainText,
-        mediaType = "TEXT",
-        timestamp = now,
-        status = "READ",
-        isOutgoing = false,
-        authTagHex = payload.authTagHex
-      )
-      messageDao.insert(replyMsg)
-      conversationDao.updateLastMessage(conversationId, "$senderName: $plainText", now)
-
-      // Fire notification if user is not in this conversation
-      if (activeChatId.value != conversationId) {
-        notificationHelper.showMessageNotification(
-          conversationId = conversationId,
-          senderName = senderName,
-          plainText = plainText,
-          privacyMode = notificationPrivacyMode.value
-        )
+      } else {
+        // Publish to Firestore for peer / guest delivery across devices
+        try {
+          val firestoreMsg = hashMapOf(
+            "id" to msgId,
+            "conversationId" to conversationId,
+            "senderId" to myUid,
+            "senderName" to myName,
+            "senderPhone" to myPhone,
+            "senderHandle" to myHandle,
+            "recipientPhone" to (conv?.phoneNumber ?: ""),
+            "recipientHandle" to (conv?.participantHandles ?: ""),
+            "cipherTextBase64" to payload.cipherTextBase64,
+            "nonceBase64" to payload.nonceBase64,
+            "plainText" to text,
+            "mediaType" to mediaType,
+            "mediaUri" to (mediaUri ?: ""),
+            "mediaMeta" to (mediaMeta ?: ""),
+            "timestamp" to now,
+            "status" to "SENT",
+            "authTagHex" to payload.authTagHex
+          )
+          authRepository.firestore.collection("messages").document(msgId).set(firestoreMsg)
+          messageDao.updateStatus(msgId, "DELIVERED")
+        } catch (e: Exception) {
+          Log.w(TAG, "Firestore publish failed: ${e.message}")
+        }
       }
     }
   }
@@ -302,14 +331,19 @@ class ChatRepository(
       if (queued.isEmpty()) return@launch
 
       for (msg in queued) {
-        delay(400)
+        delay(300)
         messageDao.updateStatus(msg.id, "SENT")
-        delay(500)
+        delay(300)
         messageDao.updateStatus(msg.id, "DELIVERED")
-        delay(800)
-        messageDao.updateStatus(msg.id, "READ")
       }
     }
+  }
+
+  /**
+   * Syncs contacts from device phonebook and checks against Firestore.
+   */
+  suspend fun syncContactsFromDevice(): ContactsSyncResult = withContext(Dispatchers.IO) {
+    ContactsSyncHelper.syncDeviceContacts(context, contactDao, authRepository.firestore)
   }
 
   fun createGroup(
@@ -406,7 +440,7 @@ class ChatRepository(
     val initialNotice = if (contact.hasApp) {
       "Encrypted Crystal chat started with ${contact.name}"
     } else {
-      "SMS Contact • Messages route to default messaging app (${contact.phoneNumber})"
+      "SMS Contact • Messages deliver via SMS (${contact.phoneNumber})"
     }
 
     val newConv = ConversationEntity(

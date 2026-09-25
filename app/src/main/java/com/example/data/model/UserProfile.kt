@@ -8,5 +8,15 @@ data class UserProfile(
   val phoneNumber: String = "",
   val photoUrl: String = "",
   val isOnline: Boolean = true,
-  val updatedAt: Long = System.currentTimeMillis()
-)
+  val updatedAt: Long = System.currentTimeMillis(),
+  val authProvider: String = "guest" // "google", "phone", "guest"
+) {
+  val isGuest: Boolean
+    get() = authProvider == "guest" || uid.startsWith("guest_") || uid == "preview_test_uid"
+
+  val isGoogleAuth: Boolean
+    get() = authProvider == "google"
+
+  val isPhoneAuth: Boolean
+    get() = authProvider == "phone"
+}

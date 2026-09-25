@@ -58,6 +58,9 @@ interface ConversationDao {
 
 @Dao
 interface MessageDao {
+  @Query("SELECT * FROM messages WHERE id = :id LIMIT 1")
+  suspend fun getMessageDirect(id: String): MessageEntity?
+
   @Query("SELECT * FROM messages WHERE conversationId = :convId ORDER BY timestamp ASC")
   fun getMessagesForConversation(convId: String): Flow<List<MessageEntity>>
 
