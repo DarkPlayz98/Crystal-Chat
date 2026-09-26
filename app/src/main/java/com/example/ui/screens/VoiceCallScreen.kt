@@ -67,6 +67,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.util.ActiveCallSession
 import com.example.util.CallStateStatus
+import com.example.util.CallerTunePlayer
+import com.example.util.CallerTuneStyle
 
 @Composable
 fun VoiceCallScreen(
@@ -77,12 +79,14 @@ fun VoiceCallScreen(
   onToggleSpeaker: () -> Unit,
   onMinimize: () -> Unit,
   onAnswerCall: () -> Unit = {},
-  onDtmfTone: (Char) -> Unit = {}
+  onDtmfTone: (Char) -> Unit = {},
+  onChangeCallerTune: (CallerTuneStyle) -> Unit = {}
 ) {
   val isConnected = session.status == CallStateStatus.CONNECTED
   val isRinging = session.status == CallStateStatus.OUTGOING_RINGING
   var showKeypad by remember { mutableStateOf(false) }
   var dialedDigits by remember { mutableStateOf("") }
+  var selectedCallerTune by remember { mutableStateOf(CallerTunePlayer.getCurrentTune()) }
 
   val infiniteTransition = rememberInfiniteTransition(label = "pulseTransition")
   val pulseScale by infiniteTransition.animateFloat(
@@ -274,15 +278,15 @@ fun VoiceCallScreen(
               Icon(
                 imageVector = Icons.Default.Phone,
                 contentDescription = null,
-                tint = Color(0xFF10B981),
+                tint = Color(0xFFA78BFA),
                 modifier = Modifier.size(14.dp)
               )
               Spacer(modifier = Modifier.width(6.dp))
               Text(
-                text = "Ringing (Playing ringtone...)",
+                text = "Playing Caller Tune: ${selectedCallerTune.displayName}",
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
-                color = Color(0xFF10B981)
+                color = Color(0xFFA78BFA)
               )
             } else if (isConnected) {
               Text(
@@ -307,34 +311,58 @@ fun VoiceCallScreen(
           }
         }
 
-        // Quick Simulated Recipient Pickup action while ringing (if user wants to connect call immediately)
+        // Caller Tune Style Selector while ringing
         if (isRinging) {
-          Spacer(modifier = Modifier.height(12.dp))
-          Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = Color(0xFF10B981).copy(alpha = 0.2f),
-            modifier = Modifier
-              .clip(RoundedCornerShape(20.dp))
-              .clickable { onAnswerCall() }
-              .testTag("simulate_answer_button")
+          Spacer(modifier = Modifier.height(10.dp))
+          Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
           ) {
-            Row(
-              modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-              verticalAlignment = Alignment.CenterVertically
+            CallerTuneStyle.values().forEach { tune ->
+              val isSelected = selectedCallerTune == tune
+              Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = if (isSelected) Color(0xFF8B5CF6).copy(alpha = 0.35f) else Color.White.copy(alpha = 0.08f),
+                border = androidx.compose.foundation.BorderStroke(
+                  1.dp,
+                  if (isSelected) Color(0xFFA78BFA) else Color.White.copy(alpha = 0.15f)
+                ),
+                modifier = Modifier
+                  .clip(RoundedCornerShape(14.dp))
+                  .clickable {
+                    selectedCallerTune = tune
+                    onChangeCallerTune(tune)
+                  }
+              ) {
+                Text(
+                  text = tune.displayName,
+                  color = if (isSelected) Color(0xFFA78BFA) else Color.White.copy(alpha = 0.75f),
+                  fontSize = 11.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                )
+              }
+            }
+          }
+
+          if (!session.recipientHasApp) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Surface(
+              shape = RoundedCornerShape(12.dp),
+              color = Color(0xFF0284C7).copy(alpha = 0.2f),
+              border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.35f))
             ) {
-              Icon(
-                imageVector = Icons.Default.Call,
-                contentDescription = null,
-                tint = Color(0xFF10B981),
-                modifier = Modifier.size(14.dp)
-              )
-              Spacer(modifier = Modifier.width(6.dp))
-              Text(
-                text = "Tap to Connect Voice Stream",
-                color = Color(0xFF10B981),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
-              )
+              Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                Text(
+                  text = "Ringing Receiver's Phone • You stay in Crystal Chat",
+                  fontSize = 11.sp,
+                  color = Color(0xFF38BDF8),
+                  fontWeight = FontWeight.Medium
+                )
+              }
             }
           }
         }

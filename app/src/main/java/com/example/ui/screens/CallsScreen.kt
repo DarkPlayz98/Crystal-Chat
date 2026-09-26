@@ -190,17 +190,13 @@ fun CallsScreen(
             CallHistoryItem(
               call = call,
               onCallAgain = {
-                if (recipientHasApp) {
-                  viewModel.startVoiceCall(
-                    contactName = call.contactName,
-                    phoneNumber = call.phoneNumber,
-                    handle = call.handle,
-                    avatarColorHex = call.avatarColorHex,
-                    recipientHasApp = true
-                  )
-                } else {
-                  viewModel.dialWithDefaultCallerApp(call.phoneNumber)
-                }
+                viewModel.startVoiceCall(
+                  contactName = call.contactName,
+                  phoneNumber = call.phoneNumber,
+                  handle = call.handle,
+                  avatarColorHex = call.avatarColorHex,
+                  recipientHasApp = recipientHasApp
+                )
               }
             )
           }
@@ -230,17 +226,13 @@ fun CallsScreen(
                   .clip(RoundedCornerShape(8.dp))
                   .clickable {
                     showContactPickerForCall = false
-                    if (contact.hasApp) {
-                      viewModel.startVoiceCall(
-                        contactName = contact.name,
-                        phoneNumber = contact.phoneNumber,
-                        handle = contact.handle,
-                        avatarColorHex = contact.avatarColorHex,
-                        recipientHasApp = true
-                      )
-                    } else {
-                      viewModel.dialWithDefaultCallerApp(contact.phoneNumber)
-                    }
+                    viewModel.startVoiceCall(
+                      contactName = contact.name,
+                      phoneNumber = contact.phoneNumber,
+                      handle = contact.handle,
+                      avatarColorHex = contact.avatarColorHex,
+                      recipientHasApp = contact.hasApp
+                    )
                   }
                   .padding(vertical = 10.dp, horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically

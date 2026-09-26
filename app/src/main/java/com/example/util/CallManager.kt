@@ -100,12 +100,6 @@ class CallManager(
     avatarColorHex: Long = 0xFF0D9488,
     recipientHasApp: Boolean = true
   ) {
-    // If recipient does NOT have the app, launch the default caller app directly!
-    if (!recipientHasApp) {
-      dialWithDefaultCallerApp(context, phoneNumber)
-      return
-    }
-
     val callId = "call_${UUID.randomUUID().toString().take(8)}"
     val session = ActiveCallSession(
       callId = callId,
@@ -114,73 +108,37 @@ class CallManager(
       handle = handle,
       avatarColorHex = avatarColorHex,
       status = CallStateStatus.OUTGOING_RINGING,
-      statusMessage = "Ringing (Crystal HD+ Audio)...",
-      recipientHasApp = true
+      statusMessage = if (recipientHasApp) "Ringing (Playing Caller Tune)..." else "Calling Cellular Receiver...",
+      recipientHasApp = recipientHasApp
     )
     _activeCall.value = session
 
     setupAudioForCall()
     startWaveformAnimation()
-    startCallerRingtone()
+    startCallerTune()
   }
 
   /**
-   * Plays the actual caller ringtone / telephone ringback cadence so the caller hears real ringing.
+   * Plays the musical Caller Tune to the caller while the recipient is ringing.
    */
-  private fun startCallerRingtone() {
-    stopRingtone()
-    ringtoneJob?.cancel()
-    ringtoneJob = scope.launch(Dispatchers.Default) {
-      try {
-        // Initialize tone generator for authentic telephony ringback tone
-        toneGenerator = ToneGenerator(AudioManager.STREAM_VOICE_CALL, 85)
+  fun startCallerTune(tune: CallerTuneStyle = CallerTunePlayer.getCurrentTune()) {
+    stopCallerTune()
+    val isSpeaker = _activeCall.value?.isSpeakerOn == true
+    CallerTunePlayer.startCallerTune(context, scope, tune, isSpeaker)
+  }
 
-        // Try getting system ringtone as secondary audio
-        try {
-          val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-          ringtonePlayer = RingtoneManager.getRingtone(context, ringtoneUri)
-        } catch (e: Exception) {
-          Log.w(TAG, "RingtoneManager: ${e.message}")
-        }
-
-        // Standard telephony cadence: ring 2 seconds, pause 3.5 seconds
-        while (isActive && _activeCall.value?.status == CallStateStatus.OUTGOING_RINGING) {
-          try {
-            toneGenerator?.startTone(ToneGenerator.TONE_SUP_RINGTONE, 2000)
-            ringtonePlayer?.play()
-          } catch (e: Exception) {
-            Log.w(TAG, "Tone playback error: ${e.message}")
-          }
-          delay(2000)
-          ringtonePlayer?.stop()
-          delay(3000)
-        }
-      } catch (e: Exception) {
-        Log.e(TAG, "Caller ringtone loop failed: ${e.message}", e)
-      }
+  fun changeCallerTune(tune: CallerTuneStyle) {
+    if (_activeCall.value?.status == CallStateStatus.OUTGOING_RINGING) {
+      startCallerTune(tune)
+    } else {
+      CallerTunePlayer.setCallerTune(tune)
     }
   }
 
-  private fun stopRingtone() {
+  private fun stopCallerTune() {
+    CallerTunePlayer.stopCallerTune()
     ringtoneJob?.cancel()
     ringtoneJob = null
-    try {
-      toneGenerator?.stopTone()
-      toneGenerator?.release()
-    } catch (e: Exception) {
-      // Ignore cleanup
-    }
-    toneGenerator = null
-
-    try {
-      if (ringtonePlayer?.isPlaying == true) {
-        ringtonePlayer?.stop()
-      }
-    } catch (e: Exception) {
-      // Ignore cleanup
-    }
-    ringtonePlayer = null
   }
 
   /**
@@ -226,7 +184,7 @@ class CallManager(
    */
   fun connectCall() {
     val curr = _activeCall.value ?: return
-    stopRingtone()
+    stopCallerTune()
 
     _activeCall.value = curr.copy(
       status = CallStateStatus.CONNECTED,
@@ -294,7 +252,7 @@ class CallManager(
     val curr = _activeCall.value ?: return
     timerJob?.cancel()
     waveJob?.cancel()
-    stopRingtone()
+    stopCallerTune()
 
     // Play call-end disconnect tone
     scope.launch(Dispatchers.Default) {

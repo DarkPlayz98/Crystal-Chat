@@ -94,6 +94,7 @@ fun ProfileAuthScreen(
   val authLoading by viewModel.authLoading.collectAsStateWithLifecycle()
   val authError by viewModel.authError.collectAsStateWithLifecycle()
   val isApiKeyRestricted by viewModel.isApiKeyRestricted.collectAsStateWithLifecycle()
+  val generatedSecurityCode by viewModel.generatedSecurityCode.collectAsStateWithLifecycle()
   val isSyncingContacts by viewModel.isSyncingContacts.collectAsStateWithLifecycle()
   val lastSyncResult by viewModel.lastSyncResult.collectAsStateWithLifecycle()
 
@@ -426,49 +427,72 @@ fun ProfileAuthScreen(
 
                 val fullPhoneToVerify = "${otpCountry.dialCode}${otpNationalNumber.filter { it.isDigit() }.trimStart('0')}"
 
-                Button(
-                  onClick = {
-                    if (activity != null && otpNationalNumber.isNotBlank()) {
-                      isSendingOtp = true
-                      otpStatusMessage = null
-                      viewModel.sendPhoneOtp(
-                        activity = activity,
-                        phoneNumber = fullPhoneToVerify,
-                        onCodeSent = { vid ->
-                          isSendingOtp = false
-                          currentVerificationId = vid
-                          otpStatusMessage = "SMS verification code sent to $fullPhoneToVerify"
-                          Toast.makeText(context, "Verification code sent!", Toast.LENGTH_SHORT).show()
-                        },
-                        onAutoVerified = {
-                          isSendingOtp = false
-                          Toast.makeText(context, "Instant phone verification successful!", Toast.LENGTH_SHORT).show()
-                        },
-                        onError = { err ->
-                          isSendingOtp = false
-                          Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                        }
-                      )
-                    }
-                  },
-                  enabled = !isSendingOtp && otpNationalNumber.length >= 6,
-                  modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("send_otp_button"),
-                  shape = RoundedCornerShape(12.dp)
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                  if (isSendingOtp) {
-                    CircularProgressIndicator(
-                      modifier = Modifier.size(18.dp),
-                      color = MaterialTheme.colorScheme.onPrimary,
-                      strokeWidth = 2.dp
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Sending SMS Code...")
-                  } else {
-                    Icon(Icons.Default.Phone, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Send SMS Verification Code", fontWeight = FontWeight.SemiBold)
+                  Button(
+                    onClick = {
+                      if (activity != null && otpNationalNumber.isNotBlank()) {
+                        isSendingOtp = true
+                        otpStatusMessage = null
+                        viewModel.sendPhoneOtp(
+                          activity = activity,
+                          phoneNumber = fullPhoneToVerify,
+                          onCodeSent = { vid ->
+                            isSendingOtp = false
+                            currentVerificationId = vid
+                            otpStatusMessage = "Verification code active for $fullPhoneToVerify"
+                            Toast.makeText(context, "Verification code sent!", Toast.LENGTH_SHORT).show()
+                          },
+                          onAutoVerified = {
+                            isSendingOtp = false
+                            Toast.makeText(context, "Instant phone verification successful!", Toast.LENGTH_SHORT).show()
+                          },
+                          onError = { err ->
+                            isSendingOtp = false
+                            Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                          }
+                        )
+                      }
+                    },
+                    enabled = !isSendingOtp && otpNationalNumber.length >= 6,
+                    modifier = Modifier
+                      .weight(1.2f)
+                      .testTag("send_otp_button"),
+                    shape = RoundedCornerShape(12.dp)
+                  ) {
+                    if (isSendingOtp) {
+                      CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        strokeWidth = 2.dp
+                      )
+                      Spacer(modifier = Modifier.width(6.dp))
+                      Text("Sending...", fontSize = 12.sp)
+                    } else {
+                      Icon(Icons.Default.Phone, contentDescription = null, modifier = Modifier.size(16.dp))
+                      Spacer(modifier = Modifier.width(6.dp))
+                      Text("Send SMS Code", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                    }
+                  }
+
+                  OutlinedButton(
+                    onClick = {
+                      if (otpNationalNumber.length >= 6) {
+                        viewModel.sendDeviceSecurityOtp(fullPhoneToVerify) { vid, code ->
+                          currentVerificationId = vid
+                          otpCodeInput = code
+                          otpStatusMessage = "Device Verification Code: $code"
+                          Toast.makeText(context, "Verification code: $code", Toast.LENGTH_SHORT).show()
+                        }
+                      }
+                    },
+                    enabled = !isSendingOtp && otpNationalNumber.length >= 6,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp)
+                  ) {
+                    Text("Instant Code", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                   }
                 }
 
@@ -476,66 +500,69 @@ fun ProfileAuthScreen(
                   Spacer(modifier = Modifier.height(10.dp))
                   Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f)),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
                     modifier = Modifier.fillMaxWidth()
                   ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                      modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                      horizontalArrangement = Arrangement.SpaceBetween,
+                      verticalAlignment = Alignment.CenterVertically
+                    ) {
                       Text(
-                        text = "Phone Auth API Key Restricted",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.error
-                      )
-                      Spacer(modifier = Modifier.height(4.dp))
-                      Text(
-                        text = "The default Cloud project has API key restrictions for SMS. You can verify via Device Security Key or enter a custom Firebase API Key.",
+                        text = "Need direct SMS via custom Firebase?",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                       )
-                      Spacer(modifier = Modifier.height(10.dp))
-                      Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                      ) {
-                        Button(
-                          onClick = {
-                            val fullPhone = "${otpCountry.dialCode}${otpNationalNumber.filter { it.isDigit() }.trimStart('0')}"
-                            viewModel.sendDeviceSecurityOtp(fullPhone) { vid, code ->
-                              currentVerificationId = vid
-                              otpStatusMessage = "Device Security Code: $code"
-                              Toast.makeText(context, "Verification code generated: $code", Toast.LENGTH_LONG).show()
-                            }
-                          },
-                          modifier = Modifier.weight(1.2f),
-                          shape = RoundedCornerShape(8.dp)
-                        ) {
-                          Text("Verify via Device Key", fontSize = 11.sp)
-                        }
-                        OutlinedButton(
-                          onClick = { showApiKeyDialog = true },
-                          modifier = Modifier.weight(1f),
-                          shape = RoundedCornerShape(8.dp)
-                        ) {
-                          Text("Custom API Key", fontSize = 11.sp)
-                        }
+                      TextButton(onClick = { showApiKeyDialog = true }) {
+                        Text("Custom Key", fontSize = 12.sp)
                       }
                     }
                   }
                 }
               } else {
                 // OTP Code Entry
+                generatedSecurityCode?.let { genCode ->
+                  Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                    modifier = Modifier.fillMaxWidth()
+                  ) {
+                    Row(
+                      modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                      horizontalArrangement = Arrangement.SpaceBetween,
+                      verticalAlignment = Alignment.CenterVertically
+                    ) {
+                      Column {
+                        Text("Verification Code:", style = MaterialTheme.typography.labelSmall)
+                        Text(
+                          text = genCode,
+                          style = MaterialTheme.typography.titleMedium,
+                          fontWeight = FontWeight.Bold,
+                          color = MaterialTheme.colorScheme.primary
+                        )
+                      }
+                      Button(
+                        onClick = { otpCodeInput = genCode },
+                        shape = RoundedCornerShape(8.dp)
+                      ) {
+                        Text("Auto-fill", fontSize = 12.sp)
+                      }
+                    }
+                  }
+                  Spacer(modifier = Modifier.height(10.dp))
+                }
+
                 otpStatusMessage?.let { msg ->
                   Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
+                    color = MaterialTheme.colorScheme.surfaceVariant,
                     modifier = Modifier.fillMaxWidth()
                   ) {
                     Text(
                       text = msg,
                       style = MaterialTheme.typography.bodySmall,
-                      color = MaterialTheme.colorScheme.onPrimaryContainer,
-                      fontWeight = FontWeight.Bold,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant,
+                      fontWeight = FontWeight.Medium,
                       modifier = Modifier.padding(8.dp)
                     )
                   }

@@ -56,6 +56,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
   val phoneVerificationId: StateFlow<String?> = authRepository.phoneVerificationId
   val pendingPhoneNumber: StateFlow<String?> = authRepository.pendingPhoneNumber
   val isApiKeyRestricted: StateFlow<Boolean> = authRepository.isApiKeyRestricted
+  val generatedSecurityCode: StateFlow<String?> = authRepository.generatedSecurityCode
 
   // Contact Syncing State
   private val _isSyncingContacts = MutableStateFlow(false)
@@ -187,11 +188,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     avatarColorHex: Long = 0xFF0D9488,
     recipientHasApp: Boolean = true
   ) {
-    if (!recipientHasApp) {
-      dialWithDefaultCallerApp(phoneNumber)
-    } else {
-      callManager.startOutgoingCall(contactName, phoneNumber, handle, avatarColorHex, recipientHasApp = true)
-    }
+    callManager.startOutgoingCall(contactName, phoneNumber, handle, avatarColorHex, recipientHasApp = recipientHasApp)
+  }
+
+  fun changeCallerTune(tune: com.example.util.CallerTuneStyle) {
+    callManager.changeCallerTune(tune)
   }
 
   fun dialWithDefaultCallerApp(phoneNumber: String) {

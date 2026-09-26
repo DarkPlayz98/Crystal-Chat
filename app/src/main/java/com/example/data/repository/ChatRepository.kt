@@ -281,16 +281,26 @@ class ChatRepository(
         mediaUri = mediaUri,
         mediaMeta = mediaMeta,
         timestamp = now,
-        status = "DELIVERED",
+        status = if (isSmsDelivery) "SMS_DELIVERED" else "DELIVERED",
         isOutgoing = true,
         expiresAt = expiresAt,
         authTagHex = payload.authTagHex,
-        isSms = false
+        isSms = isSmsDelivery
       )
 
       messageDao.insert(message)
       val summary = if (mediaType != "TEXT") "[$mediaType] $text" else text
       conversationDao.updateLastMessage(conversationId, "You: $summary", now)
+
+      // If recipient is a phone contact (non-app user), deliver via cellular SMS directly to recipient's phone!
+      if (isSmsDelivery && !conv?.phoneNumber.isNullOrBlank()) {
+        try {
+          SmsHelper.sendDirectSmsInBackground(context, conv.phoneNumber, text)
+          Log.i(TAG, "Sent background SMS directly to recipient ${conv.phoneNumber}")
+        } catch (e: Exception) {
+          Log.w(TAG, "SMS dispatch error: ${e.message}")
+        }
+      }
 
       // Publish to Firestore for peer delivery across devices
       try {

@@ -383,24 +383,16 @@ fun ContactsScreen(
             ContactRowItem(
               contact = contact,
               onMessageClick = {
-                if (contact.hasApp) {
-                  viewModel.startChatWithContact(contact)
-                } else {
-                  viewModel.openDefaultSms(contact.phoneNumber)
-                }
+                viewModel.startChatWithContact(contact)
               },
               onCallClick = {
-                if (contact.hasApp) {
-                  viewModel.startVoiceCall(
-                    contactName = contact.name,
-                    phoneNumber = contact.phoneNumber,
-                    handle = contact.handle,
-                    avatarColorHex = contact.avatarColorHex,
-                    recipientHasApp = true
-                  )
-                } else {
-                  viewModel.dialWithDefaultCallerApp(contact.phoneNumber)
-                }
+                viewModel.startVoiceCall(
+                  contactName = contact.name,
+                  phoneNumber = contact.phoneNumber,
+                  handle = contact.handle,
+                  avatarColorHex = contact.avatarColorHex,
+                  recipientHasApp = contact.hasApp
+                )
               },
               onToggleHasApp = {
                 viewModel.toggleContactHasApp(contact.id, contact.hasApp)
